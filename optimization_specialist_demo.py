@@ -9,7 +9,7 @@
 import sys
 
 from evoman.environment import Environment
-from demo_controller import player_controller
+from wouters_test_controller import player_controller
 
 # imports other libs
 import time
@@ -28,7 +28,7 @@ experiment_name = 'optimization_test'
 if not os.path.exists(experiment_name):
     os.makedirs(experiment_name)
 
-n_hidden_neurons = 10
+n_hidden_neurons = [20,10,5]
 
 
 
@@ -57,7 +57,13 @@ ini = time.time()  # sets time marker
 run_mode = 'train' # train or test
 
 # number of weights for multilayer with 10 hidden neurons
-n_vars = (env.get_num_sensors()+1)*n_hidden_neurons + (n_hidden_neurons+1)*5
+# n_vars = (env.get_num_sensors()+1)*n_hidden_neurons + (n_hidden_neurons+1)*5
+n_vars = env.get_num_sensors() + 1
+for i in range(len(n_hidden_neurons)):
+    n_vars = n_vars*n_hidden_neurons[i]
+
+for i in range(len(n_hidden_neurons)):
+    n_vars += n_hidden_neurons[i]
 
 
 dom_u = 1
@@ -181,7 +187,18 @@ if not os.path.exists(experiment_name+'/evoman_solstate'):
 
     print( '\nNEW EVOLUTION\n')
 
-    pop = np.random.uniform(dom_l, dom_u, (npop, n_vars))
+    # pop = np.random.uniform(len((n_hidden_neurons), dom_l, dom_u, (npop, n_vars))
+    pop = []
+    for i in range(npop):
+        species = []
+        in_size = 20
+        for layer_size in n_hidden_neurons:
+            weights = np.random.uniform(in_size, layer_size)
+            bias = np.random.uniform(1, layer_size)
+            in_size = layer_size
+            species.append((bias, weights))
+        pop.append(species)
+        
     fit_pop = evaluate(pop)
     best = np.argmax(fit_pop)
     mean = np.mean(fit_pop)
