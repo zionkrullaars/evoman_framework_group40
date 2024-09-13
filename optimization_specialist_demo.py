@@ -17,7 +17,7 @@ import numpy as np
 import random
 from math import fabs,sqrt
 import glob, os
-
+import gzip, pickle
 
 # choose this for not using visuals and thus making experiments faster
 headless = True
@@ -179,7 +179,7 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
 
     # Goes through pairs in the population and chooses two random fit individuals according to tournament
     for p in range(0,len(pop), 2):
-        print(len(pop[0]))
+        # print(len(pop[0]))
         p1 = tournament(pop, fit_pop)
         p2 = tournament(pop, fit_pop)
 
@@ -236,18 +236,19 @@ def doomsday(pop: list[tuple[np.ndarray, np.ndarray]],fit_pop:np.ndarray, npop: 
                     if np.random.uniform(0,1)  <= pro:
                         pop[o][l][v][i] = np.random.uniform(dom_l, dom_u) # random dna, uniform dist.
                     else:
-                        pop[o][l][v][i] = pop[order[-1:]][l][v][i] # dna from best, which is the last index (-1) of the order list
+                        print(order[-1:])
+                        pop[o][l][v][i] = pop[order[-1:][0]][l][v][i] # dna from best, which is the last index (-1) of the order list
 
         fit_pop[o]=evaluate([pop[o]]) # Evaluate the new individual
 
     return pop,fit_pop
 
 
-
 # loads file with the best solution for testing
 if run_mode =='test':
 
-    bsol = np.loadtxt(experiment_name+'/best.txt')
+    file = gzip.open(experiment_name+'/best')
+    bsol =  pickle.load(file, encoding='latin1')
     print( '\n RUNNING SAVED BEST SOLUTION \n')
     env.update_parameter('speed','normal')
     evaluate([bsol])
@@ -267,10 +268,10 @@ if not os.path.exists(experiment_name+'/evoman_solstate'):
         individual = []
         in_size = 20
         for layer_size in n_hidden_neurons:
-            weights = np.random.uniform(in_size, layer_size)
-            bias = np.random.uniform(1, layer_size)
+            weights = np.random.uniform(-1,1,(in_size, layer_size))
+            bias = np.random.uniform(-1,1,(1, layer_size))
             in_size = layer_size
-            individual.append((bias, weights))
+            individual.append((weights, bias))
         pop.append(individual)
         
     fit_pop = evaluate(pop)
@@ -332,8 +333,16 @@ for i in range(ini_g+1, gens):
     probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
     chosen = np.random.choice(len(pop), npop , p=probs, replace=False)
     chosen = np.append(chosen[1:],best)
-    pop = pop[chosen]
-    fit_pop = fit_pop[chosen]
+
+    newpop = []
+    for c in chosen:
+        newpop.append(pop[c])
+    pop = newpop
+
+    newpop = []
+    for c in chosen:
+        newpop.append(fit_pop[c])
+    fit_pop = newpop
 
 
     # searching new areas
@@ -350,7 +359,7 @@ for i in range(ini_g+1, gens):
         file_aux.write('\ndoomsday')
         file_aux.close()
 
-        pop, fit_pop = doomsday(pop,fit_pop)
+        pop, fit_pop = doomsday(pop,fit_pop, npop)
         notimproved = 0
 
     best = np.argmax(fit_pop)
@@ -370,7 +379,9 @@ for i in range(ini_g+1, gens):
     file_aux.close()
 
     # saves file with the best solution
-    np.savetxt(experiment_name+'/best.txt',pop[best])
+    file = gzip.open(experiment_name+'/best', 'w', compresslevel = 5)
+    pickle.dump(best, file, protocol=2)
+    file.close()
 
     # saves simulation state
     solutions = [pop, fit_pop]

@@ -35,4 +35,8 @@ class Linear:
         Returns:
             np.ndarray: Output values for this layer.
         """
-        return x.dot(self.weights) + self.bias
+        # print(x.shape, self.weights.shape, self.bias.shape)
+        x = x.dot(self.weights) + self.bias
+        # print("After dot product", x.shape)
+        # print("---------------")
+        return x

@@ -15,35 +15,30 @@ class player_controller(Controller):
 
 	def set(self, layerconf: Optional[list[tuple[np.ndarray,np.ndarray]]], n_inputs: int):
 		# Number of hidden neurons
-
-		if self.n_hidden[0] > 0:			
-			# We must assure that the amount of layers we have weight and bias data for matches the amount of layers we want to create
-			assert len(layerconf) == len(self.n_hidden), "The amount of configurations for the hidden layers does not match the amount of hidden layers"
 			
-			self.layers = []
-			in_size = n_inputs
-			for i, layer_size in enumerate(self.n_hidden):
-				self.layers.append(Linear(in_size, layer_size, layerconf[i][0], layerconf[i][1]))
+		# We must assure that the amount of layers we have weight and bias data for matches the amount of layers we want to create
+		assert len(layerconf) == len(self.n_hidden), "The amount of configurations for the hidden layers does not match the amount of hidden layers"
+		
+		self.layers = []
+		in_size = n_inputs
+		for i, layer_size in enumerate(self.n_hidden):
+			# print(layer_size)
+			# print(layerconf)
+			self.layers.append(Linear(in_size, layer_size, layerconf[i][0], layerconf[i][1]))
             
 
 	def control(self, inputs, controller):
 		# Normalises the input using min-max scaling
 		inputs = (inputs-min(inputs))/float((max(inputs)-min(inputs)))
 
-		if self.n_hidden[0]>0:
-			# Preparing the weights and biases from the controller of layer 1
-			for layer in self.layers[:-1]:
-				output = leakyrelu_activation(layer.forward(inputs))
-				inputs = output
-			
-			output = sigmoid_activation(self.layers[-1].forward(inputs))[0]
-		else:
-			bias = controller[:5].reshape(1, 5)
-			weights = controller[5:].reshape((len(inputs), 5))
+		# Preparing the weights and biases from the controller of layer 1
+		for layer in self.layers[:-1]:
+			output = leakyrelu_activation(layer.forward(inputs))
+			inputs = output
+		
+		output = sigmoid_activation(self.layers[-1].forward(inputs))[0]
 
-			# For the last layer we use a sigmoid activation to convert the output to probabilities betweeon 0 and 1
-			output = sigmoid_activation(inputs.dot(weights) + bias)[0]
-
+		# print(output.shape)
 		# takes decisions about sprite actions
 		if output[0] > 0.5:
 			left = 1
