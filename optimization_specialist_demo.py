@@ -32,7 +32,6 @@ if not os.path.exists(experiment_name):
 n_hidden_neurons = [20,10,5]
 
 
-
 # initializes simulation in individual evolution mode, for single static enemy.
 env = Environment(experiment_name=experiment_name,
                   enemies=[8],
@@ -70,7 +69,7 @@ for i in range(len(n_hidden_neurons)):
 dom_u = 1
 dom_l = -1
 npop = 100
-gens = 30
+gens = 500
 mutation = 0.2
 last_best = 0
 
@@ -139,11 +138,14 @@ def limits(x):
     else:
         return x
 
+###############################################################################
+# Zo ziet pop er uit!
 # [
-#     [                             # Model 1
-#         ([1,1,0.5], [1,2,0.1])    # Linear layer 1
-#     ]
+#     [                                      Model 1
+#         ([1,1,...,0.5], [1,2,...,0.1])     Linear layer 1 (bias, weights)
+#     ],
 # ]
+###############################################################################
 
 # crossover
 def mutate(vals: np.ndarray, probability: float) -> np.ndarray:
@@ -236,10 +238,11 @@ def doomsday(pop: list[tuple[np.ndarray, np.ndarray]],fit_pop:np.ndarray, npop: 
                     if np.random.uniform(0,1)  <= pro:
                         pop[o][l][v][i] = np.random.uniform(dom_l, dom_u) # random dna, uniform dist.
                     else:
-                        print(order[-1:])
                         pop[o][l][v][i] = pop[order[-1:][0]][l][v][i] # dna from best, which is the last index (-1) of the order list
 
-        fit_pop[o]=evaluate([pop[o]]) # Evaluate the new individual
+        
+        val = evaluate([pop[o]]) # Evaluate the new individual
+        fit_pop[o]=val[0]
 
     return pop,fit_pop
 
