@@ -18,61 +18,7 @@ import random
 from math import fabs,sqrt
 import glob, os
 import gzip, pickle
-
-# choose this for not using visuals and thus making experiments faster
-headless = True
-if headless:
-    os.environ["SDL_VIDEODRIVER"] = "dummy"
-
-
-experiment_name = 'optimization_test'
-if not os.path.exists(experiment_name):
-    os.makedirs(experiment_name)
-
-n_hidden_neurons = [20,10,5]
-
-
-# initializes simulation in individual evolution mode, for single static enemy.
-env = Environment(experiment_name=experiment_name,
-                  enemies=[8],
-                  playermode="ai",
-                  player_controller=player_controller(n_hidden_neurons),
-                  enemymode="static",
-                  level=2,
-                  speed="fastest",
-                  visuals=False)
-
-# default environment fitness is assumed for experiment
-
-env.state_to_log() # checks environment state
-
-
-####   Optimization for controller solution (best genotype-weights for phenotype-network): Ganetic Algorihm    ###
-
-ini = time.time()  # sets time marker
-
-
-# genetic algorithm params
-
-run_mode = 'train' # train or test
-
-# number of weights for multilayer with 10 hidden neurons
-# n_vars = (env.get_num_sensors()+1)*n_hidden_neurons + (n_hidden_neurons+1)*5
-n_vars = env.get_num_sensors() + 1
-for i in range(len(n_hidden_neurons)):
-    n_vars = n_vars*n_hidden_neurons[i]
-
-for i in range(len(n_hidden_neurons)):
-    n_vars += n_hidden_neurons[i]
-
-
-dom_u = 1
-dom_l = -1
-npop = 100
-gens = 500
-mutation = 0.2
-last_best = 0
-
+import argparse
 
 # runs simulation
 def simulation(env,x):
@@ -247,160 +193,245 @@ def doomsday(pop: list[tuple[np.ndarray, np.ndarray]],fit_pop:np.ndarray, npop: 
     return pop,fit_pop
 
 
-# loads file with the best solution for testing
-if run_mode =='test':
+def main(experiment_name: str, npop: int, n_hidden_neurons: list, fit_pop: np.ndarray, env: Environment, gens: int, ini_g: int, new_evolution: bool) -> None:
+    """Main function for the genetic algorithm
 
-    file = gzip.open(experiment_name+'/best')
-    bsol =  pickle.load(file, encoding='latin1')
-    print( '\n RUNNING SAVED BEST SOLUTION \n')
-    env.update_parameter('speed','normal')
-    evaluate([bsol])
+    Args:
+        experiment_name (str): Name of experiment
+        npop (int): Size of population
+        n_hidden_neurons (list): List of integers representing the amount of neurons in each hidden layer
+        fit_pop (np.ndarray): Array of fitness values for each individual in population, of shape (pop_size*1)
+        env (Environment): Environment object for the evoman framework
+        gens (int): Amount of generations to run the evolution for
+        ini_g (int): Which generation to start at
+        new_evolution (bool): Whether to start a new evolution or continue from a previous one
+    """
+    # loads file with the best solution for testing
+    if run_mode =='test':
 
-    sys.exit(0)
+        file = gzip.open(experiment_name+'/best')
+        bsol =  pickle.load(file, encoding='latin1')
+        print( '\n RUNNING SAVED BEST SOLUTION \n')
+        env.update_parameter('speed','normal')
+        evaluate([bsol])
 
-
-# initializes population loading old solutions or generating new ones
-
-if not os.path.exists(experiment_name+'/evoman_solstate'):
-
-    print( '\nNEW EVOLUTION\n')
-
-    # pop = np.random.uniform(len((n_hidden_neurons), dom_l, dom_u, (npop, n_vars))
-    pop: list[list[tuple[np.ndarray, np.ndarray]]] = []
-    for i in range(npop):
-        individual = []
-        in_size = 20
-        for layer_size in n_hidden_neurons:
-            weights = np.random.uniform(-1,1,(in_size, layer_size))
-            bias = np.random.uniform(-1,1,(1, layer_size))
-            in_size = layer_size
-            individual.append((weights, bias))
-        pop.append(individual)
-        
-    fit_pop = evaluate(pop)
-    best = np.argmax(fit_pop)
-    mean = np.mean(fit_pop)
-    std = np.std(fit_pop)
-    ini_g = 0
-    solutions = [pop, fit_pop]
-    env.update_solutions(solutions)
-
-else:
-
-    print( '\nCONTINUING EVOLUTION\n')
-
-    env.load_state()
-    pop = env.solutions[0]
-    fit_pop = env.solutions[1]
-
-    best = np.argmax(fit_pop)
-    mean = np.mean(fit_pop)
-    std = np.std(fit_pop)
-
-    # finds last generation number
-    file_aux  = open(experiment_name+'/gen.txt','r')
-    ini_g = int(file_aux.readline())
-    file_aux.close()
+        sys.exit(0)
 
 
+    # initializes population loading old solutions or generating new ones
 
+    if not os.path.exists(experiment_name+'/evoman_solstate') or new_evolution:
+        print( '\nNEW EVOLUTION\n')
 
-# saves results for first pop
-file_aux  = open(experiment_name+'/results.txt','a')
-file_aux.write('\n\ngen best mean std')
-print( '\n GENERATION '+str(ini_g)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)))
-file_aux.write('\n'+str(ini_g)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6))   )
-file_aux.close()
+        # pop = np.random.uniform(len((n_hidden_neurons), dom_l, dom_u, (npop, n_vars))
+        pop: list[list[tuple[np.ndarray, np.ndarray]]] = []
+        for i in range(npop):
+            individual = []
+            in_size = 20
+            for layer_size in n_hidden_neurons:
+                weights = np.random.uniform(-1,1,(in_size, layer_size))
+                bias = np.random.uniform(-1,1,(1, layer_size))
+                in_size = layer_size
+                individual.append((weights, bias))
+            pop.append(individual)
+            
+        fit_pop = evaluate(pop)
+        best = np.argmax(fit_pop)
+        mean = np.mean(fit_pop)
+        std = np.std(fit_pop)
+        ini_g = 0
+        solutions = [pop, fit_pop]
+        env.update_solutions(solutions)
 
-
-# evolution
-
-last_sol = fit_pop[best]
-notimproved = 0
-
-for i in range(ini_g+1, gens):
-
-    offspring = crossover(pop, fit_pop)  # crossover
-    fit_offspring = evaluate(offspring)   # evaluation
-    pop = pop + offspring
-    fit_pop = np.append(fit_pop,fit_offspring)
-
-    best = np.argmax(fit_pop) #best solution in generation
-    fit_pop[best] = float(evaluate([pop[best] ])[0]) # repeats best eval, for stability issues
-    best_sol = fit_pop[best]
-
-    # selection
-    # TODO: Add sigma scaling
-    fit_pop_cp = fit_pop
-    fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop))) # avoiding negative probabilities, as fitness is ranges from negative numbers
-    probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
-    chosen = np.random.choice(len(pop), npop , p=probs, replace=False)
-    chosen = np.append(chosen[1:],best)
-
-    newpop = []
-    for c in chosen:
-        newpop.append(pop[c])
-    pop = newpop
-
-    newpop = []
-    for c in chosen:
-        newpop.append(fit_pop[c])
-    fit_pop = newpop
-
-
-    # searching new areas
-
-    if best_sol <= last_sol:
-        notimproved += 1
     else:
-        last_sol = best_sol
-        notimproved = 0
+        print( '\nCONTINUING EVOLUTION\n')
 
-    if notimproved >= 15:
+        env.load_state()
+        pop = env.solutions[0]
+        fit_pop = env.solutions[1]
 
-        file_aux  = open(experiment_name+'/results.txt','a')
-        file_aux.write('\ndoomsday')
+        best = np.argmax(fit_pop)
+        mean = np.mean(fit_pop)
+        std = np.std(fit_pop)
+
+        # finds last generation number
+        file_aux  = open(experiment_name+'/gen.txt','r')
+        ini_g = int(file_aux.readline())
         file_aux.close()
 
-        pop, fit_pop = doomsday(pop,fit_pop, npop)
-        notimproved = 0
-
-    best = np.argmax(fit_pop)
-    std  =  np.std(fit_pop)
-    mean = np.mean(fit_pop)
-
-
-    # saves results
+    # saves results for first pop
     file_aux  = open(experiment_name+'/results.txt','a')
-    print( '\n GENERATION '+str(i)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)))
-    file_aux.write('\n'+str(i)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6))   )
+    file_aux.write('\n\ngen best mean std')
+    print( '\n GENERATION '+str(ini_g)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)))
+    file_aux.write('\n'+str(ini_g)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6))   )
     file_aux.close()
 
-    # saves generation number
-    file_aux  = open(experiment_name+'/gen.txt','w')
-    file_aux.write(str(i))
-    file_aux.close()
+    train(pop, fit_pop, best, ini_g, gens, npop)
 
-    # saves file with the best solution
-    file = gzip.open(experiment_name+'/best', 'w', compresslevel = 5)
-    pickle.dump(best, file, protocol=2)
+
+def train(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, best: int, ini_g: int, gens: int, npop: int) -> None:
+    """Train/Evolution loop for the genetic algorithm
+
+    Args:
+        pop (list[list[tuple[np.ndarray, np.ndarray]]]): Population formatted as a an array of models containing tuples of weights and biases.
+        fit_pop (np.ndarray): Array of fitness values for each individual in population, of shape (pop_size*1)
+        best (int): Index of the best individual in the population
+        ini_g (int): Which generation to start at
+        gens (int): Amount of generations to run the evolution for
+        npop (int): Amount of individuals in the population
+    """
+
+    last_sol = fit_pop[best]
+    notimproved = 0
+
+    for i in range(ini_g+1, gens):
+
+        offspring = crossover(pop, fit_pop)  # crossover
+        fit_offspring = evaluate(offspring)   # evaluation
+        pop = pop + offspring
+        fit_pop = np.append(fit_pop,fit_offspring)
+
+        best = np.argmax(fit_pop) #best solution in generation
+        fit_pop[best] = float(evaluate([pop[best] ])[0]) # repeats best eval, for stability issues
+        best_sol = fit_pop[best]
+
+        # selection
+        # TODO: Add sigma scaling
+        fit_pop_cp = fit_pop
+        fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop))) # avoiding negative probabilities, as fitness is ranges from negative numbers
+        probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
+        chosen = np.random.choice(len(pop), npop , p=probs, replace=False)
+        chosen = np.append(chosen[1:],best)
+
+        newpop = []
+        for c in chosen:
+            newpop.append(pop[c])
+        pop = newpop
+
+        newpop = []
+        for c in chosen:
+            newpop.append(fit_pop[c])
+        fit_pop = newpop
+
+
+        # searching new areas
+
+        if best_sol <= last_sol:
+            notimproved += 1
+        else:
+            last_sol = best_sol
+            notimproved = 0
+
+        if notimproved >= 15:
+
+            file_aux  = open(experiment_name+'/results.txt','a')
+            file_aux.write('\ndoomsday')
+            file_aux.close()
+
+            pop, fit_pop = doomsday(pop,fit_pop, npop)
+            notimproved = 0
+
+        best = np.argmax(fit_pop)
+        std  =  np.std(fit_pop)
+        mean = np.mean(fit_pop)
+
+
+        # saves results
+        file_aux  = open(experiment_name+'/results.txt','a')
+        print( '\n GENERATION '+str(i)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)))
+        file_aux.write('\n'+str(i)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6))   )
+        file_aux.close()
+
+        # saves generation number
+        file_aux  = open(experiment_name+'/gen.txt','w')
+        file_aux.write(str(i))
+        file_aux.close()
+
+        # saves file with the best solution
+        file = gzip.open(experiment_name+'/best', 'w', compresslevel = 5)
+        pickle.dump(best, file, protocol=2)
+        file.close()
+
+        # saves simulation state
+        solutions = [pop, fit_pop]
+        env.update_solutions(solutions)
+        env.save_state()
+
+    fim = time.time() # prints total execution time for experiment
+    print( '\nExecution time: '+str(round((fim-ini)/60))+' minutes \n')
+    print( '\nExecution time: '+str(round((fim-ini)))+' seconds \n')
+
+
+    file = open(experiment_name+'/neuroended', 'w')  # saves control (simulation has ended) file for bash loop file
     file.close()
 
-    # saves simulation state
-    solutions = [pop, fit_pop]
-    env.update_solutions(solutions)
-    env.save_state()
+    env.state_to_log() # checks environment state
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Run the genetic algorithm for the evoman framework')
+    parser.add_argument('--experiment_name', type=str, default='optimization_test', help='Name of the experiment')
+    parser.add_argument('--n_hidden_neurons', type=int, nargs='+', default=[20,10,5], help='Number of hidden neurons in each layer')
+    parser.add_argument('--dom_u', type=float, default=1, help='Upper bound for the weights and biases')
+    parser.add_argument('--dom_l', type=float, default=-1, help='Lower bound for the weights and biases')
+    parser.add_argument('--npop', type=int, default=100, help='Population size')
+    parser.add_argument('--gens', type=int, default=500, help='Amount of generations to run the evolution for')
+    parser.add_argument('--mutation', type=float, default=0.2, help='Mutation rate')
+    parser.add_argument('--last_best', type=int, default=0, help='Last best fitness value')
+    parser.add_argument('--headless', type=bool, default=True, help='Run the simulation without visuals')
+    parser.add_argument('--new_evolution', type=bool, default=False, help='Start a new evolution')
+    args = parser.parse_args()
+    # choose this for not using visuals and thus making experiments faster
+    headless = args.headless
+    if headless:
+        os.environ["SDL_VIDEODRIVER"] = "dummy"
 
 
+    experiment_name = args.experiment_name
+    if not os.path.exists(experiment_name):
+        os.makedirs(experiment_name)
+
+    n_hidden_neurons = [20,10,5]
 
 
-fim = time.time() # prints total execution time for experiment
-print( '\nExecution time: '+str(round((fim-ini)/60))+' minutes \n')
-print( '\nExecution time: '+str(round((fim-ini)))+' seconds \n')
+    # initializes simulation in individual evolution mode, for single static enemy.
+    env = Environment(experiment_name=experiment_name,
+                    enemies=[8],
+                    playermode="ai",
+                    player_controller=player_controller(n_hidden_neurons),
+                    enemymode="static",
+                    level=2,
+                    speed="fastest",
+                    visuals=False)
+
+    # default environment fitness is assumed for experiment
+
+    env.state_to_log() # checks environment state
 
 
-file = open(experiment_name+'/neuroended', 'w')  # saves control (simulation has ended) file for bash loop file
-file.close()
+    ####   Optimization for controller solution (best genotype-weights for phenotype-network): Ganetic Algorihm    ###
+
+    ini = time.time()  # sets time marker
 
 
-env.state_to_log() # checks environment state
+    # genetic algorithm params
+
+    run_mode = 'train' # train or test
+
+    # number of weights for multilayer with 10 hidden neurons
+    # n_vars = (env.get_num_sensors()+1)*n_hidden_neurons + (n_hidden_neurons+1)*5
+    n_vars = env.get_num_sensors() + 1
+    for i in range(len(n_hidden_neurons)):
+        n_vars = n_vars*n_hidden_neurons[i]
+
+    for i in range(len(n_hidden_neurons)):
+        n_vars += n_hidden_neurons[i]
+
+
+    dom_u = args.dom_u
+    dom_l = args.dom_l
+    npop = args.npop
+    gens = args.gens
+    mutation = args.mutation
+    last_best = args.last_best
+
+    main(experiment_name, npop, n_hidden_neurons, np.zeros(npop), env, gens, 0, args.new_evolution)
