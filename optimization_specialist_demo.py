@@ -178,7 +178,8 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
     total_offspring = np.zeros((0,n_vars))
 
     # Goes through pairs in the population and chooses two random fit individuals according to tournament
-    for p in range(0,pop.shape[0], 2):
+    for p in range(0,len(pop), 2):
+        print(len(pop[0]))
         p1 = tournament(pop, fit_pop)
         p2 = tournament(pop, fit_pop)
 
@@ -192,6 +193,7 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
 
             for layer_p1, layer_p2 in zip(p1, p2):
                 # crossover
+                
                 weights = layer_p1[1]*cross_prop+layer_p2[1]*(1-cross_prop)
                 bias = layer_p1[0]*cross_prop+layer_p2[0]*(1-cross_prop)
 
@@ -211,7 +213,7 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
     return offspring
 
 
-def doomsday(pop: list[tuple[np.ndarray, np.ndarray]],fit_pop:np.ndarray) -> tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray]:
+def doomsday(pop: list[tuple[np.ndarray, np.ndarray]],fit_pop:np.ndarray, npop: int) -> tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray]:
     """Kills the worst genomes, and replace with new best/random solutions
 
     Args:
@@ -222,19 +224,21 @@ def doomsday(pop: list[tuple[np.ndarray, np.ndarray]],fit_pop:np.ndarray) -> tup
         _type_: _description_
     """
 
-    worst = int(npop/4)  # a quarter of the population
-    order = np.argsort(fit_pop)
-    orderasc = order[0:worst]
+    worst = int(npop//4)  # a quarter of the population
+    order = np.argsort(fit_pop) # sort the population by fitness
+    orderasc = order[0:worst] # get the worst individuals
 
     for o in orderasc:
-        for j in range(0,n_vars):
-            pro = np.random.uniform(0,1)
-            if np.random.uniform(0,1)  <= pro:
-                pop[o][j] = np.random.uniform(dom_l, dom_u) # random dna, uniform dist.
-            else:
-                pop[o][j] = pop[order[-1:]][0][j] # dna from best
+        for l, layer in enumerate(pop[o]):
+            for v, vect in enumerate(layer): # Go through the bias and weights vectors
+                for i in range(0,len(vect)):
+                    pro = np.random.uniform(0,1) # Get a random probability
+                    if np.random.uniform(0,1)  <= pro:
+                        pop[o][l][v][i] = np.random.uniform(dom_l, dom_u) # random dna, uniform dist.
+                    else:
+                        pop[o][l][v][i] = pop[order[-1:]][l][v][i] # dna from best, which is the last index (-1) of the order list
 
-        fit_pop[o]=evaluate([pop[o]])
+        fit_pop[o]=evaluate([pop[o]]) # Evaluate the new individual
 
     return pop,fit_pop
 
@@ -260,14 +264,14 @@ if not os.path.exists(experiment_name+'/evoman_solstate'):
     # pop = np.random.uniform(len((n_hidden_neurons), dom_l, dom_u, (npop, n_vars))
     pop: list[list[tuple[np.ndarray, np.ndarray]]] = []
     for i in range(npop):
-        species = []
+        individual = []
         in_size = 20
         for layer_size in n_hidden_neurons:
             weights = np.random.uniform(in_size, layer_size)
             bias = np.random.uniform(1, layer_size)
             in_size = layer_size
-            species.append((bias, weights))
-        pop.append(species)
+            individual.append((bias, weights))
+        pop.append(individual)
         
     fit_pop = evaluate(pop)
     best = np.argmax(fit_pop)
