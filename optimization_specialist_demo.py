@@ -138,6 +138,8 @@ def crossover(pop):
             offspring[f] = p1*cross_prop+p2*(1-cross_prop)
 
             # mutation
+            # TODO: Add non-linearity to the mutation
+            # TODO: Add swap mutation
             for i in range(0,len(offspring[f])):
                 if np.random.uniform(0 ,1)<=mutation:
                     offspring[f][i] =   offspring[f][i]+np.random.normal(0, 1)
