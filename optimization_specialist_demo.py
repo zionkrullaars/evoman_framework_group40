@@ -118,9 +118,22 @@ def limits(x):
     else:
         return x
 
+# [
+#     [                             # Model 1
+#         ([1,1,0.5], [1,2,0.1])    # Linear layer 1
+#     ]
+# ]
 
 # crossover
-def crossover(pop):
+def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]]) -> np.ndarray:
+    """Crossover function to generate offspring from the population
+
+    Args:
+        pop (list[tuple[np.ndarray, np.ndarray]]): Population formatted as a an array of models containing tuples of weights and biases.
+
+    Returns:
+        _type_: _description_
+    """    
 
     total_offspring = np.zeros((0,n_vars))
 
@@ -132,8 +145,8 @@ def crossover(pop):
         n_offspring =   np.random.randint(1,3+1, 1)[0]
         offspring =  np.zeros( (n_offspring, n_vars) )
 
-        for f in range(0,n_offspring):
 
+        for f in range(0,n_offspring):
             cross_prop = np.random.uniform(0,1)
             offspring[f] = p1*cross_prop+p2*(1-cross_prop)
 
@@ -190,7 +203,7 @@ if not os.path.exists(experiment_name+'/evoman_solstate'):
     print( '\nNEW EVOLUTION\n')
 
     # pop = np.random.uniform(len((n_hidden_neurons), dom_l, dom_u, (npop, n_vars))
-    pop = []
+    pop: list[list[tuple[np.ndarray, np.ndarray]]] = []
     for i in range(npop):
         species = []
         in_size = 20

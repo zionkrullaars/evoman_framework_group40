@@ -1,0 +1,37 @@
+Use framework test controller
+
+DO:
+    - You are allowed, but not required, to use the default fitness functions of the framework.
+    - With both algorithms (and for each enemy) you must repeat your final experiments 10 times (independently) and your report should present the statistics based on these 10 runs.
+
+DONT:
+    - Touch the evoman folder or anything in it
+    - simply copy and paste the code available in the scripts optimization_#_demo.py
+
+**Alg 1 - Crossover focussed + simple Mutation
+    > Viablity focussed 
+    > Zeng + Mert
+
+    Make sure you use the viable cross-over function to see optimal evolution 
+        - In paper describe the viablity 
+        - In paper describe the difference to simple cross over in example file
+        - In paper show evolution 
+
+**Alg 2 - Mutation focussed + simple Crossover
+    > Swap Mutation + Non-Linearity
+    > Wouter + Zion
+
+    Make sure u implement new variable + nonlin function to boost evo
+        - In paper describe nonlin function
+        - In paper describe difference to examp file
+        - In paper show evo with and without
+
+**Conclusions and Results
+    > Show comparison mutation and crossover based evolution
+        - Present the statistics based on the 10 runs. (see doc)
+        - Compare your algorithms by enemy, making a line-plot across the generations, with the average/std (for the mean and the maximum) of the fitness. Note that you need to calculate the average (over the 10 runs) of the mean and maximum (over the population in each generation). Do one plot by enemy, thus, separately.
+        - Compare your algorithms by enemy, testing 5 times your final best3 solution for each of the 10 independent runs, and present the individual gain in box-plots. Note that you need to calculate theme and of the 5 times for each solution of the algorithm for the enemy, and these means are the values that will be points in the box-plot.
+        In summary, it is a total of 3 pairs of box-plots (so 6 boxes), being one pair per enemy. Additionally, do a statistical test to verify if the differences in the average of these means are significant between the groups of best solutions, when comparing two algorithms of an enemy.
+        - The individual gain, i.e., the gain measure when playing against one individual enemy is calculated as individual_gain = player_energy - enemy_energy.
+        - The environmental parameter of level of difficulty of the game should be 2 for all experiments, as well as the parameter contacthurt should be set as “player” (both these values are set by default).
+        - As for the other environmental parameters, you are free to choose their values, but required to report any changes to their default values.
