@@ -17,7 +17,7 @@ import numpy as np
 import random
 from math import fabs,sqrt
 import glob, os
-import gzip, pickle
+import gzip, pickle, yaml
 import argparse
 
 # runs simulation
@@ -52,7 +52,7 @@ def evaluate(x: list[list[tuple[np.ndarray, np.ndarray]]]) -> np.ndarray:
 
 
 # tournament
-def tournament(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray) -> np.ndarray:
+def tournament(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
     """Tournament function to select the fittest of two individuals in the population
 
     Args:
@@ -73,26 +73,6 @@ def tournament(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarr
     else:
         return pop[c2]
 
-
-# limits
-def limits(x):
-
-    if x>dom_u:
-        return dom_u
-    elif x<dom_l:
-        return dom_l
-    else:
-        return x
-
-###############################################################################
-# Zo ziet pop er uit!
-# [
-#     [                                      Model 1
-#         ([1,1,...,0.5], [1,2,...,0.1])     Linear layer 1 (bias, weights)
-#     ],
-# ]
-###############################################################################
-
 # crossover
 def mutate(vals: np.ndarray, probability: float) -> np.ndarray:
     """Mutate the values of a layer
@@ -106,13 +86,13 @@ def mutate(vals: np.ndarray, probability: float) -> np.ndarray:
     # TODO: Add non-linearity to the mutation
     # TODO: Add swap mutation
     for i in range(0,len(vals)):
-        if np.random.uniform(0 ,1)<=mutation:
+        if np.random.uniform(0 ,1)<=probability:
             vals[i] =   vals[i]+np.random.normal(0, 1)
 
     return vals
 
 
-def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray) -> np.ndarray:
+def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, cfg: dict) -> list[list[tuple[np.ndarray, np.ndarray]]]:
     """Crossover function to generate offspring from the population
 
     Args:
@@ -120,10 +100,9 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
         fit_pop (np.ndarray): Array of fitness values for each individual in population, of shape (pop_size*1)
 
     Returns:
-        _type_: _description_
+        np.ndarray: New population of offspring
     """    
     # TODO: Add incest
-    total_offspring = np.zeros((0,n_vars))
 
     # Goes through pairs in the population and chooses two random fit individuals according to tournament
     for p in range(0,len(pop), 2):
@@ -132,12 +111,12 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
         p2 = tournament(pop, fit_pop)
 
         n_offspring =   np.random.randint(1,3+1, 1)[0]
-        offspring: list[tuple[np.ndarray, np.ndarray]] = []
+        offspring: list[list[tuple[np.ndarray, np.ndarray]]] = []
 
 
         for f in range(0,n_offspring):
             cross_prop = np.random.uniform(0,1) # Get a random ratio of influence between parents p1 and p2
-            child = []
+            child: list[tuple[np.ndarray, np.ndarray]] = []
 
             for layer_p1, layer_p2 in zip(p1, p2):
                 # crossover
@@ -146,13 +125,13 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
                 bias = layer_p1[0]*cross_prop+layer_p2[0]*(1-cross_prop)
 
                 # mutation
-                weights = mutate(weights, mutation)
-                bias = mutate(bias, mutation)
+                weights = mutate(weights, cfg['mutation'])
+                bias = mutate(bias, cfg['mutation'])
 
                 # limit between -1 and 1
                 # TODO: Do this through non-linear tanh function (see nnlayers.py for other non linear functions)
-                bias = bias.clip(-1, 1)
-                weights = weights.clip(-1, 1)
+                bias = bias.clip(cfg['dom_l'], cfg['dom_u'])
+                weights = weights.clip(cfg['dom_l'], cfg['dom_u'])
                 
                 child.append((bias, weights))
 
@@ -161,7 +140,7 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
     return offspring
 
 
-def doomsday(pop: list[tuple[np.ndarray, np.ndarray]],fit_pop:np.ndarray, npop: int) -> tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray]:
+def doomsday(pop: list[list[tuple[np.ndarray, np.ndarray]]],fit_pop:np.ndarray, cfg: dict) -> tuple[list[list[tuple[np.ndarray, np.ndarray]]], np.ndarray]:
     """Kills the worst genomes, and replace with new best/random solutions
 
     Args:
@@ -169,10 +148,10 @@ def doomsday(pop: list[tuple[np.ndarray, np.ndarray]],fit_pop:np.ndarray, npop: 
         fit_pop (np.ndarray): Array of fitness values for each individual in population, of shape (pop_size*1)
 
     Returns:
-        _type_: _description_
+        tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray]: New population and fitness values
     """
 
-    worst = int(npop//4)  # a quarter of the population
+    worst = int(cfg['npop']//4)  # a quarter of the population
     order = np.argsort(fit_pop) # sort the population by fitness
     orderasc = order[0:worst] # get the worst individuals
 
@@ -182,7 +161,7 @@ def doomsday(pop: list[tuple[np.ndarray, np.ndarray]],fit_pop:np.ndarray, npop: 
                 for i in range(0,len(vect)):
                     pro = np.random.uniform(0,1) # Get a random probability
                     if np.random.uniform(0,1)  <= pro:
-                        pop[o][l][v][i] = np.random.uniform(dom_l, dom_u) # random dna, uniform dist.
+                        pop[o][l][v][i] = np.random.uniform(cfg['dom_l'], cfg['dom_u']) # random dna, uniform dist.
                     else:
                         pop[o][l][v][i] = pop[order[-1:][0]][l][v][i] # dna from best, which is the last index (-1) of the order list
 
@@ -192,106 +171,92 @@ def doomsday(pop: list[tuple[np.ndarray, np.ndarray]],fit_pop:np.ndarray, npop: 
 
     return pop,fit_pop
 
-
-def main(experiment_name: str, npop: int, n_hidden_neurons: list, fit_pop: np.ndarray, env: Environment, gens: int, ini_g: int, new_evolution: bool) -> None:
-    """Main function for the genetic algorithm
+def generate_new_pop(npop: int, n_hidden_neurons: list[int]) -> tuple[list[list[tuple[np.ndarray, np.ndarray]]], np.ndarray, tuple[int, float, float], int]:
+    """Generate a new population of individuals
 
     Args:
-        experiment_name (str): Name of experiment
-        npop (int): Size of population
-        n_hidden_neurons (list): List of integers representing the amount of neurons in each hidden layer
-        fit_pop (np.ndarray): Array of fitness values for each individual in population, of shape (pop_size*1)
-        env (Environment): Environment object for the evoman framework
-        gens (int): Amount of generations to run the evolution for
-        ini_g (int): Which generation to start at
-        new_evolution (bool): Whether to start a new evolution or continue from a previous one
+        npop (int): Amount of individuals in the population
+        n_hidden_neurons (list[int]): Amount of hidden neurons in each layer
+
+    Returns:
+        tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray, tuple[int, float, float], int]: Population, fitness values, best individual, mean and standard deviation of the fitness values, and the initial generation number
     """
-    # loads file with the best solution for testing
-    if run_mode =='test':
+    pop: list[list[tuple[np.ndarray, np.ndarray]]] = []
+    for i in range(npop):
+        individual = []
+        in_size = 20 # Amount of input neurons (sensors of the game)
+        for layer_size in n_hidden_neurons:
+            weights = np.random.uniform(-1,1,(in_size, layer_size))
+            bias = np.random.uniform(-1,1,(1, layer_size))
+            in_size = layer_size
+            individual.append((weights, bias))
+        pop.append(individual)
 
-        file = gzip.open(experiment_name+'/best')
-        bsol =  pickle.load(file, encoding='latin1')
-        print( '\n RUNNING SAVED BEST SOLUTION \n')
-        env.update_parameter('speed','normal')
-        evaluate([bsol])
+    ###############################################################################
+    # Zo ziet pop er uit!
+    # [
+    #     [                                      Model 1
+    #         ([1,1,...,0.5], [1,2,...,0.1])     Linear layer 1 (weights, bias)
+    #     ],
+    # ]
+    ###############################################################################
+        
+    fit_pop = evaluate(pop)
+    best = int(np.argmax(fit_pop))
+    mean = float(np.mean(fit_pop))
+    std = float(np.std(fit_pop))
+    ini_g = int(0)
+    solutions = [pop, fit_pop]
+    env.update_solutions(solutions)
+    return pop, fit_pop, (best, mean, std), ini_g
 
-        sys.exit(0)
+def load_pop(env: Environment, experiment_name: str) -> tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray, tuple[int, float, float], int]:
+    """Load a population from a previous experiment
 
+    Args:
+        env (Environment): Environment object for the evoman framework
+        experiment_name (str): Name of the experiment
 
-    # initializes population loading old solutions or generating new ones
+    Returns:
+        tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray, tuple[int, float, float], int]: Population, fitness values, best individual, mean and standard deviation of the fitness values, and the initial generation number
+    """
+    env.load_state()
+    pop = env.solutions[0]
+    fit_pop = env.solutions[1]
 
-    if not os.path.exists(experiment_name+'/evoman_solstate') or new_evolution:
-        print( '\nNEW EVOLUTION\n')
+    best = int(np.argmax(fit_pop))
+    mean = float(np.mean(fit_pop))
+    std = float(np.std(fit_pop))
 
-        # pop = np.random.uniform(len((n_hidden_neurons), dom_l, dom_u, (npop, n_vars))
-        pop: list[list[tuple[np.ndarray, np.ndarray]]] = []
-        for i in range(npop):
-            individual = []
-            in_size = 20
-            for layer_size in n_hidden_neurons:
-                weights = np.random.uniform(-1,1,(in_size, layer_size))
-                bias = np.random.uniform(-1,1,(1, layer_size))
-                in_size = layer_size
-                individual.append((weights, bias))
-            pop.append(individual)
-            
-        fit_pop = evaluate(pop)
-        best = np.argmax(fit_pop)
-        mean = np.mean(fit_pop)
-        std = np.std(fit_pop)
-        ini_g = 0
-        solutions = [pop, fit_pop]
-        env.update_solutions(solutions)
-
-    else:
-        print( '\nCONTINUING EVOLUTION\n')
-
-        env.load_state()
-        pop = env.solutions[0]
-        fit_pop = env.solutions[1]
-
-        best = np.argmax(fit_pop)
-        mean = np.mean(fit_pop)
-        std = np.std(fit_pop)
-
-        # finds last generation number
-        file_aux  = open(experiment_name+'/gen.txt','r')
-        ini_g = int(file_aux.readline())
-        file_aux.close()
-
-    # saves results for first pop
-    file_aux  = open(experiment_name+'/results.txt','a')
-    file_aux.write('\n\ngen best mean std')
-    print( '\n GENERATION '+str(ini_g)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)))
-    file_aux.write('\n'+str(ini_g)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6))   )
+    # finds last generation number
+    file_aux  = open(experiment_name+'/gen.txt','r')
+    ini_g = int(file_aux.readline())
     file_aux.close()
+    return pop, fit_pop, (best, mean, std), ini_g
 
-    train(pop, fit_pop, best, ini_g, gens, npop)
-
-
-def train(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, best: int, ini_g: int, gens: int, npop: int) -> None:
+def train(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, best: int, ini_g: int, cfg: dict) -> None:
     """Train/Evolution loop for the genetic algorithm
 
     Args:
+        env (Environment): Environment object for the evoman framework
         pop (list[list[tuple[np.ndarray, np.ndarray]]]): Population formatted as a an array of models containing tuples of weights and biases.
         fit_pop (np.ndarray): Array of fitness values for each individual in population, of shape (pop_size*1)
         best (int): Index of the best individual in the population
         ini_g (int): Which generation to start at
-        gens (int): Amount of generations to run the evolution for
-        npop (int): Amount of individuals in the population
+        cfg (dict): Configuration dictionary
     """
 
     last_sol = fit_pop[best]
     notimproved = 0
 
-    for i in range(ini_g+1, gens):
+    for i in range(ini_g+1, cfg['gens']):
 
-        offspring = crossover(pop, fit_pop)  # crossover
+        offspring = crossover(pop, fit_pop, cfg)  # crossover
         fit_offspring = evaluate(offspring)   # evaluation
         pop = pop + offspring
         fit_pop = np.append(fit_pop,fit_offspring)
 
-        best = np.argmax(fit_pop) #best solution in generation
+        best = int(np.argmax(fit_pop)) #best solution in generation
         fit_pop[best] = float(evaluate([pop[best] ])[0]) # repeats best eval, for stability issues
         best_sol = fit_pop[best]
 
@@ -300,18 +265,18 @@ def train(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, b
         fit_pop_cp = fit_pop
         fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop))) # avoiding negative probabilities, as fitness is ranges from negative numbers
         probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
-        chosen = np.random.choice(len(pop), npop , p=probs, replace=False)
+        chosen = np.random.choice(len(pop), cfg['npop'] , p=probs, replace=False)
         chosen = np.append(chosen[1:],best)
 
-        newpop = []
+        newpop: list[list[tuple[np.ndarray, np.ndarray]]] = []
         for c in chosen:
             newpop.append(pop[c])
         pop = newpop
 
-        newpop = []
+        newfit = []
         for c in chosen:
-            newpop.append(fit_pop[c])
-        fit_pop = newpop
+            newfit.append(fit_pop[c])
+        fit_pop = np.array(newfit)
 
 
         # searching new areas
@@ -328,10 +293,10 @@ def train(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, b
             file_aux.write('\ndoomsday')
             file_aux.close()
 
-            pop, fit_pop = doomsday(pop,fit_pop, npop)
+            pop, fit_pop = doomsday(pop,fit_pop, cfg)
             notimproved = 0
 
-        best = np.argmax(fit_pop)
+        best = int(np.argmax(fit_pop))
         std  =  np.std(fit_pop)
         mean = np.mean(fit_pop)
 
@@ -348,8 +313,8 @@ def train(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, b
         file_aux.close()
 
         # saves file with the best solution
-        file = gzip.open(experiment_name+'/best', 'w', compresslevel = 5)
-        pickle.dump(best, file, protocol=2)
+        file = gzip.open(experiment_name+'/best', 'wb', compresslevel = 5)
+        pickle.dump(best, file, protocol=2) # type: ignore
         file.close()
 
         # saves simulation state
@@ -367,71 +332,93 @@ def train(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, b
 
     env.state_to_log() # checks environment state
 
-if __name__ == "__main__":
+def print_dict(d: dict) -> None:
+    """Print a dictionary
+
+    Args:
+        d (dict): Dictionary to print
+    """
+    for k, v in d.items():
+        print(f'{k}: {v}')
+
+def main(env: Environment, args: argparse.Namespace, cfg: dict) -> None:
+    """Main function for the genetic algorithm
+
+    Args:
+        env (Environment): Environment object for the evoman framework
+        args (argparse.Namespace): Command line arguments
+        cfg (dict): Configuration dictionary
+    """
+    # loads file with the best solution for testing
+    if args.run_mode =='test':
+        file = gzip.open(args.experiment_name+'/best')
+        bsol =  pickle.load(file, encoding='latin1')
+        print( '\n RUNNING SAVED BEST SOLUTION \n')
+        env.update_parameter('speed','normal')
+        evaluate([bsol])
+        sys.exit(0)
+
+
+    # initializes population loading old solutions or generating new ones
+    if not os.path.exists(args.experiment_name+'/evoman_solstate') or args.new_evolution:
+        print( '\nNEW EVOLUTION\n')
+        pop, fit_pop, fit_pop_stats, ini_g = generate_new_pop(cfg['npop'], cfg['archetecture'])
+
+    else:
+        print( '\nCONTINUING EVOLUTION\n')
+        pop, fit_pop, fit_pop_stats, ini_g = load_pop(env, args.experiment_name)
+
+    # saves results for first pop
+    best, mean, std = fit_pop_stats
+    file_aux  = open(experiment_name+'/results.txt','a')
+    file_aux.write('\n\ngen best mean std')
+    print( '\n GENERATION '+str(ini_g)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)))
+    file_aux.write('\n'+str(ini_g)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6))   )
+    file_aux.close()
+
+    train(env, pop, fit_pop, best, ini_g, cfg)
+
+if __name__ == "__main__": # Basically just checks if the script is being run directly or imported as a module
+
+    # Command line arguments, this makes it so you can run the script from the command line with different arguments as such:
+    # python optimization_specialist_demo.py --experiment_name=optimization_test --headless=True --new_evolution=False --run_mode=train
     parser = argparse.ArgumentParser(description='Run the genetic algorithm for the evoman framework')
     parser.add_argument('--experiment_name', type=str, default='optimization_test', help='Name of the experiment')
-    parser.add_argument('--n_hidden_neurons', type=int, nargs='+', default=[20,10,5], help='Number of hidden neurons in each layer')
-    parser.add_argument('--dom_u', type=float, default=1, help='Upper bound for the weights and biases')
-    parser.add_argument('--dom_l', type=float, default=-1, help='Lower bound for the weights and biases')
-    parser.add_argument('--npop', type=int, default=100, help='Population size')
-    parser.add_argument('--gens', type=int, default=500, help='Amount of generations to run the evolution for')
-    parser.add_argument('--mutation', type=float, default=0.2, help='Mutation rate')
-    parser.add_argument('--last_best', type=int, default=0, help='Last best fitness value')
     parser.add_argument('--headless', type=bool, default=True, help='Run the simulation without visuals')
     parser.add_argument('--new_evolution', type=bool, default=False, help='Start a new evolution')
+    parser.add_argument('--run_mode', type=str, default='train', help='Run mode for the genetic algorithm')
     args = parser.parse_args()
+
+    # Loading our training config
+    cfg: dict = yaml.safe_load(open('./config/' + args.experiment_name + '.yaml')) # type: ignore
+    
+    print('Config:')
+    print_dict(cfg)
+
     # choose this for not using visuals and thus making experiments faster
     headless = args.headless
     if headless:
-        os.environ["SDL_VIDEODRIVER"] = "dummy"
+        os.environ["SDL_VIDEODRIVER"] = "dummy" # Turn off videodriver when running headless
 
-
+    # Create a folder to store the experiment
     experiment_name = args.experiment_name
     if not os.path.exists(experiment_name):
         os.makedirs(experiment_name)
-
-    n_hidden_neurons = [20,10,5]
-
 
     # initializes simulation in individual evolution mode, for single static enemy.
     env = Environment(experiment_name=experiment_name,
                     enemies=[8],
                     playermode="ai",
-                    player_controller=player_controller(n_hidden_neurons),
+                    player_controller=player_controller(cfg['archetecture']), # Initialise player with specified archetecture
                     enemymode="static",
                     level=2,
                     speed="fastest",
                     visuals=False)
 
-    # default environment fitness is assumed for experiment
-
     env.state_to_log() # checks environment state
 
 
     ####   Optimization for controller solution (best genotype-weights for phenotype-network): Ganetic Algorihm    ###
-
     ini = time.time()  # sets time marker
 
-
-    # genetic algorithm params
-
-    run_mode = 'train' # train or test
-
-    # number of weights for multilayer with 10 hidden neurons
-    # n_vars = (env.get_num_sensors()+1)*n_hidden_neurons + (n_hidden_neurons+1)*5
-    n_vars = env.get_num_sensors() + 1
-    for i in range(len(n_hidden_neurons)):
-        n_vars = n_vars*n_hidden_neurons[i]
-
-    for i in range(len(n_hidden_neurons)):
-        n_vars += n_hidden_neurons[i]
-
-
-    dom_u = args.dom_u
-    dom_l = args.dom_l
-    npop = args.npop
-    gens = args.gens
-    mutation = args.mutation
-    last_best = args.last_best
-
-    main(experiment_name, npop, n_hidden_neurons, np.zeros(npop), env, gens, 0, args.new_evolution)
+    main(env, args, cfg)

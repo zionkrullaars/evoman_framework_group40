@@ -25,12 +25,12 @@ class player_controller(Controller):
 
 			# Biases for the n hidden neurons
 			self.bias1 = controller[:self.n_hidden[0]].reshape(1, self.n_hidden[0])
-			print(self.bias1.shape)
+			# print(self.bias1.shape)
 			# Weights for the connections from the inputs to the hidden nodes
 			weights1_slice = n_inputs * self.n_hidden[0] + self.n_hidden[0]
-			print(weights1_slice)
+			# print(weights1_slice)
 			self.weights1 = controller[self.n_hidden[0]:weights1_slice].reshape((n_inputs, self.n_hidden[0]))
-			print(self.weights1.shape)
+			# print(self.weights1.shape)
 
 			# Outputs activation first layer.
 
