@@ -53,7 +53,7 @@ def evaluate(x: list[list[tuple[np.ndarray, np.ndarray]]]) -> np.ndarray:
 
 
 # tournament
-def tournament(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray) -> list[tuple[np.ndarray, np.ndarray]]:
+def tournament(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray) -> tuple[list[tuple[np.ndarray, np.ndarray]], int]:
     """Tournament function to select the fittest of two individuals in the population
 
     Args:
@@ -70,9 +70,9 @@ def tournament(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarr
 
     # Return the fittest of the two 
     if fit_pop[c1] > fit_pop[c2]:
-        return pop[c1]
+        return pop[c1], c1
     else:
-        return pop[c2]
+        return pop[c2], c2
 
 # Mutation
 def mutate(vals: np.ndarray, probability: float) -> np.ndarray:
@@ -114,23 +114,30 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
     for p in range(0,len(pop), 5):
         parent_amt = 5
         parents = []
+        parent_shapes = []
         for _ in range(parent_amt):
             parentSnips = []
-            parent = tournament(popcop, fit_pop)
-            del_fit = popcop.index(parent)
-            popcop.pop(parent)
-            del fitpopcop[del_fit]
+            parent, del_fit = tournament(popcop, fit_pop)
+            shape = []
+            popcop.pop(del_fit)
+            fitpopcop = np.delete(fitpopcop, del_fit)
 
-            for layer in parents:
+            for layer in parent:
                 # Go through every layer in parents
                 # Layer_p1 looks like (weights, bias)
-                # weight (1,2,*3,4,*5,6,*7,8,*9,10)
+                # weight [(1,2,*3,4,*5,6,*7,8,*9,10,1,2,*3,4,*5,6,*7,8,*9,10,1,2,*3,4,*5,6,*7,8,*9,10)]
                 # weight 4 waardes (die niet hetzelfde zijn) tussen 0 en 9
                 # crossover
-                snips = [0.0, 0.1, 0.4, 0.7, 0.75, 1.0]
+                snips = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
 
-                weights = layer[1]
-                bias = layer[0]
+                weights = layer[0]
+                bias = layer[1]
+
+                # Save the shape of the weights and bias
+                shape.append((weights.shape, bias.shape))
+                # Reshape to one dimensional array
+                weights = weights.reshape((weights.shape[0] * weights.shape[1]))
+                bias = bias.reshape((bias.shape[0] * bias.shape[1]))
 
                 weightSnips = []
                 biasSnips = []
@@ -138,18 +145,23 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
                     startSnip = snips[snipInd]
                     endSnip = snips[snipInd + 1]
 
-                    startW = math.floor(weights.shape[0] * startSnip) # Begin index van snippet
-                    endW = math.ceil(weights.shape[0] * endSnip) # Begin index van snippet
+                    subtract = 0
+                    if snipInd == len(snips)-2:
+                        subtract -= 1
+
+                    startW = math.floor((weights.shape[0]-1) * startSnip) - subtract # Begin index van snippet
+                    endW = math.floor((weights.shape[0]-1) * endSnip) - subtract  # Begin index van snippet
                     wSnip = weights[startW:endW]
                     weightSnips.append(wSnip)
 
-                    startB = math.floor(bias.shape[0] * startSnip) # Begin index van snippet
-                    endB = math.ceil(bias.shape[0] * endSnip) # Begin index van snippet
+                    startB = math.floor((bias.shape[0]-1) * startSnip) - subtract # Begin index van snippet
+                    endB = math.floor((bias.shape[0]-1) * endSnip) - subtract # Begin index van snippet
                     bSnip = weights[startB:endB]
                     biasSnips.append(bSnip)
 
-                parentSnips.append((wSnip, bSnip))
+                parentSnips.append((weightSnips, biasSnips))
             parents.append(parentSnips)
+            parent_shapes.append(shape)
 
         n_offspring = 5
         offspring: list[list[tuple[np.ndarray, np.ndarray]]] = []
@@ -158,16 +170,21 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
             child: list[tuple[np.ndarray, np.ndarray]] = []
 
             for layerNum in range(len(parents[0])):
-                weights = np.array()
-                bias = np.array()
+                weights = np.array(0)
+                bias = np.array(0)
 
                 for snip in range(len(snips)-1):
-                    snippetW = parent[(snip+offset) % 5][layerNum][0][snip]
-                    snippetB = parent[(snip+offset) % 5][layerNum][1][snip]
-                    np.append(weights, snippetW)
-                    np.append(bias, snippetB)
+                    # print(parents[(snip+offset) % 5][layerNum][0])
+                    # print(parents[(snip+offset) % 5][layerNum][1])
+                    snippetW = parents[(snip+offset) % 5][layerNum][0][snip]
+                    snippetB = parents[(snip+offset) % 5][layerNum][1][snip]
+                    weights = np.append(weights, snippetW)
+                    bias = np.append(bias, snippetB)
                 
                 # mutation
+                weights = weights.reshape(parent_shapes[0][layerNum][0])
+                bias = bias.reshape(parent_shapes[0][layerNum][1])
+                
                 weights = mutate(weights, cfg['mutation'])
                 bias = mutate(bias, cfg['mutation'])
 
@@ -177,7 +194,6 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
 
                 layerChild = (weights, bias)
                 child.append(layerChild)
-
             offspring.append(child)
 
     return offspring
@@ -453,7 +469,7 @@ if __name__ == "__main__": # Basically just checks if the script is being run di
                     playermode="ai",
                     player_controller=player_controller(cfg['archetecture']), # Initialise player with specified archetecture
                     enemymode="static",
-                    level=2,
+                    level=3,
                     speed="fastest",
                     visuals=False)
 
