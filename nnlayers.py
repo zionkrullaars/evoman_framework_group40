@@ -11,7 +11,9 @@ def tanh_activation(x: np.ndarray):
     return np.tanh(x)
 
 def softmax_activation(x: np.ndarray):
-    return np.exp(x)/np.sum(np.exp(x), axis=0)
+    # Retrieved from https://stackoverflow.com/questions/34968722/how-to-implement-the-softmax-function-in-python
+    e_x = np.exp(x - np.max(x))
+    return e_x / e_x.sum(axis=0) # only difference
 
 def normalise(x: np.ndarray):
     return (x-np.min(x))/float((np.max(x)-np.min(x)))
