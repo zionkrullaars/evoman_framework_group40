@@ -107,7 +107,7 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
     # TODO: Make list duplicate with population and fitness, remove parent from after each parent chosen
 
     popcop = pop.copy()
-    fitpopcop = fit_pop.copy()
+    fitpopcop = fit_pop.copy() # Fit pop cop with a hat on top
     # Know that the 1st of popcop corresponds to the 1st of fitpopcop
 
     # Goes through pairs in the population and chooses two random fit individuals according to tournament
