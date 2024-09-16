@@ -19,6 +19,7 @@ from math import fabs,sqrt
 import glob, os
 import gzip, pickle, yaml
 import argparse
+import math
 
 # runs simulation
 def simulation(env,x):
@@ -73,7 +74,7 @@ def tournament(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarr
     else:
         return pop[c2]
 
-# crossover
+# Mutation
 def mutate(vals: np.ndarray, probability: float) -> np.ndarray:
     """Mutate the values of a layer
 
@@ -91,7 +92,7 @@ def mutate(vals: np.ndarray, probability: float) -> np.ndarray:
 
     return vals
 
-
+# Crossover
 def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, cfg: dict) -> list[list[tuple[np.ndarray, np.ndarray]]]:
     """Crossover function to generate offspring from the population
 
@@ -103,37 +104,79 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
         np.ndarray: New population of offspring
     """    
     # TODO: Add incest
+    # TODO: Make list duplicate with population and fitness, remove parent from after each parent chosen
+
+    popcop = pop.copy()
+    fitpopcop = fit_pop.copy()
+    # Know that the 1st of popcop corresponds to the 1st of fitpopcop
 
     # Goes through pairs in the population and chooses two random fit individuals according to tournament
-    for p in range(0,len(pop), 2):
-        # print(len(pop[0]))
-        p1 = tournament(pop, fit_pop)
-        p2 = tournament(pop, fit_pop)
+    for p in range(0,len(pop), 5):
+        parent_amt = 5
+        parents = []
+        for _ in range(parent_amt):
+            parentSnips = []
+            parent = tournament(popcop, fit_pop)
+            del_fit = popcop.index(parent)
+            popcop.pop(parent)
+            del fitpopcop[del_fit]
 
-        n_offspring =   np.random.randint(1,3+1, 1)[0]
+            for layer in parents:
+                # Go through every layer in parents
+                # Layer_p1 looks like (weights, bias)
+                # weight (1,2,*3,4,*5,6,*7,8,*9,10)
+                # weight 4 waardes (die niet hetzelfde zijn) tussen 0 en 9
+                # crossover
+                snips = [0.0, 0.1, 0.4, 0.7, 0.75, 1.0]
+
+                weights = layer[1]
+                bias = layer[0]
+
+                weightSnips = []
+                biasSnips = []
+                for snipInd in range(len(snips)-1):
+                    startSnip = snips[snipInd]
+                    endSnip = snips[snipInd + 1]
+
+                    startW = math.floor(weights.shape[0] * startSnip) # Begin index van snippet
+                    endW = math.ceil(weights.shape[0] * endSnip) # Begin index van snippet
+                    wSnip = weights[startW:endW]
+                    weightSnips.append(wSnip)
+
+                    startB = math.floor(bias.shape[0] * startSnip) # Begin index van snippet
+                    endB = math.ceil(bias.shape[0] * endSnip) # Begin index van snippet
+                    bSnip = weights[startB:endB]
+                    biasSnips.append(bSnip)
+
+                parentSnips.append((wSnip, bSnip))
+            parents.append(parentSnips)
+
+        n_offspring = 5
         offspring: list[list[tuple[np.ndarray, np.ndarray]]] = []
 
-
-        for f in range(0,n_offspring):
-            cross_prop = np.random.uniform(0,1) # Get a random ratio of influence between parents p1 and p2
+        for offset in range(0, n_offspring):
             child: list[tuple[np.ndarray, np.ndarray]] = []
 
-            for layer_p1, layer_p2 in zip(p1, p2):
-                # crossover
-                
-                weights = layer_p1[1]*cross_prop+layer_p2[1]*(1-cross_prop)
-                bias = layer_p1[0]*cross_prop+layer_p2[0]*(1-cross_prop)
+            for layerNum in range(len(parents[0])):
+                weights = np.array()
+                bias = np.array()
 
+                for snip in range(len(snips)-1):
+                    snippetW = parent[(snip+offset) % 5][layerNum][0][snip]
+                    snippetB = parent[(snip+offset) % 5][layerNum][1][snip]
+                    np.append(weights, snippetW)
+                    np.append(bias, snippetB)
+                
                 # mutation
                 weights = mutate(weights, cfg['mutation'])
                 bias = mutate(bias, cfg['mutation'])
 
                 # limit between -1 and 1
-                # TODO: Do this through non-linear tanh function (see nnlayers.py for other non linear functions)
                 bias = bias.clip(cfg['dom_l'], cfg['dom_u'])
                 weights = weights.clip(cfg['dom_l'], cfg['dom_u'])
-                
-                child.append((bias, weights))
+
+                layerChild = (weights, bias)
+                child.append(layerChild)
 
             offspring.append(child)
 
@@ -261,7 +304,7 @@ def train(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_
         best_sol = fit_pop[best]
 
         # selection
-        # TODO: Add sigma scaling
+        # TODO: Add sigma scaling (possibly challenging)
         fit_pop_cp = fit_pop
         fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop))) # avoiding negative probabilities, as fitness is ranges from negative numbers
         probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
@@ -299,7 +342,6 @@ def train(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_
         best = int(np.argmax(fit_pop))
         std  =  np.std(fit_pop)
         mean = np.mean(fit_pop)
-
 
         # saves results
         file_aux  = open(experiment_name+'/results.txt','a')
