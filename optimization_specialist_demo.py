@@ -149,14 +149,10 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
                     if snipInd == len(snips)-2:
                         subtract -= 1
 
-                    startW = math.floor((weights.shape[0]-1) * startSnip) - subtract # Begin index van snippet
-                    endW = math.floor((weights.shape[0]-1) * endSnip) - subtract  # Begin index van snippet
-                    wSnip = weights[startW:endW]
+                    wSnip = getSnippet(weights, startSnip, endSnip, subtract)
                     weightSnips.append(wSnip)
 
-                    startB = math.floor((bias.shape[0]-1) * startSnip) - subtract # Begin index van snippet
-                    endB = math.floor((bias.shape[0]-1) * endSnip) - subtract # Begin index van snippet
-                    bSnip = weights[startB:endB]
+                    bSnip = getSnippet(bias, startSnip, endSnip, subtract)
                     biasSnips.append(bSnip)
 
                 parentSnips.append((weightSnips, biasSnips))
@@ -174,8 +170,6 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
                 bias = np.array(0)
 
                 for snip in range(len(snips)-1):
-                    # print(parents[(snip+offset) % 5][layerNum][0])
-                    # print(parents[(snip+offset) % 5][layerNum][1])
                     snippetW = parents[(snip+offset) % 5][layerNum][0][snip]
                     snippetB = parents[(snip+offset) % 5][layerNum][1][snip]
                     weights = np.append(weights, snippetW)
@@ -197,6 +191,12 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
             offspring.append(child)
 
     return offspring
+
+def getSnippet(vals, startSnip, endSnip, subtract):
+    startW = math.floor((vals.shape[0]-1) * startSnip) - subtract # Begin index van snippet
+    endW = math.floor((vals.shape[0]-1) * endSnip) - subtract  # Begin index van snippet
+    wSnip = vals[startW:endW]
+    return wSnip
 
 
 def doomsday(pop: list[list[tuple[np.ndarray, np.ndarray]]],fit_pop:np.ndarray, cfg: dict) -> tuple[list[list[tuple[np.ndarray, np.ndarray]]], np.ndarray]:
