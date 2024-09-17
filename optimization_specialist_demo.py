@@ -189,7 +189,7 @@ def doomsday(pop: list[list[tuple[np.ndarray, np.ndarray]]],fit_pop:np.ndarray, 
         list[tuple[np.ndarray, np.ndarray]]: New population
     """
 
-    worst_indices = np.argsort(fit_pop)[:cfg['npop'] // 4] # A quarter of the individuals
+    worst_indices = np.argsort(fit_pop)[(cfg['npop'] // 4)*3:] # A quarter of the individuals
     best_individual = pop[np.argmax(fit_pop)]
 
     assert np.argmax(fit_pop) not in worst_indices, "Best individual is also one of the worst"
