@@ -311,18 +311,11 @@ def cross_species(species_pop: list[list[list[tuple[np.ndarray, np.ndarray]]]], 
     prob = random.uniform(0,1)
     if cfg['spec_cross'] >= prob:
         print("Crossing species")
-        new_species_pop: list[list[list[tuple[np.ndarray, np.ndarray]]]] = []
-        new_species_fit: list[np.ndarray] = []
-        new_species_other: list[np.ndarray] = []
         for target in range(cfg['species']-1):
             origin_index = (target + 1) % cfg['species']
-            origin_species = species_pop[origin_index]
             origin_fit = species_fit[origin_index]
-            origin_other = species_other[origin_index]
 
-            target_species = species_pop[target]
             target_fit = species_fit[target]
-            target_other = species_other[target]
 
             best_origin_ind = np.argmax(origin_fit)
             best_target_ind = np.argmax(target_fit)
@@ -331,25 +324,6 @@ def cross_species(species_pop: list[list[list[tuple[np.ndarray, np.ndarray]]]], 
             species_pop[target][best_target_ind], species_pop[origin_index][best_origin_ind] = species_pop[origin_index][best_origin_ind], species_pop[target][best_target_ind]
             species_fit[target][best_target_ind], species_fit[origin_index][best_origin_ind] = species_fit[origin_index][best_origin_ind], species_fit[target][best_target_ind]
             species_other[target][best_target_ind], species_other[origin_index][best_origin_ind] = species_other[origin_index][best_origin_ind], species_other[target][best_target_ind]
-
-            # best_origin = origin_species[best_origin_ind].copy()
-            # best_origin_other = origin_other[best_origin_ind]
-            # best_origin_fit = origin_fit[best_origin_ind]
-
-            # Delete from origin
-            # del origin_species[best_origin_ind]
-            # origin_fit = np.delete(origin_fit, best_origin_ind)
-            # origin_other = np.delete(origin_other, best_origin_ind, axis=0)
-
-            # new_target_species = target_species.copy()
-            # new_target_species.append(best_origin)
-
-            # new_target_fit = np.append(target_fit, best_origin_fit)
-            # new_target_other = np.append(target_other, best_origin_other)
-
-            # new_species_pop.append(new_target_species)
-            # new_species_fit.append(new_target_fit)
-            # new_species_other.append(new_target_other)
             
         return species_pop, species_fit, species_other
     
