@@ -287,7 +287,6 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]],
                 # Save the shape of the weights and bias
                 shape.append((weights.shape, bias.shape))
                 # Reshape to one dimensional array
-                # TODO: Why do we need reshape here?
                 weights = weights.reshape((weights.shape[0] * weights.shape[1]))
                 bias = bias.reshape((bias.shape[0] * bias.shape[1]))
 
@@ -409,14 +408,7 @@ def generate_new_pop(npop: int, n_hidden_neurons: list[int]) -> tuple[
         pop.append(individual)
 
     ###############################################################################
-    # Zo ziet pop er uit!
-    # [
-    #     [                                      Model 1
-    #         ([1,1,...,0.5], [1,2,...,0.1])     Linear layer 1 (weights, bias)
-    #     ],
-    # ]
 
-    # OR
     # [
     #     [                                      Model 1
     #         ([[1,1,...,0.5],...,[1,3,...,0.2]], [1,2,...,0.1])     Linear layer 1 (weights, bias)
@@ -494,7 +486,6 @@ def train(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_
         best_sol = fit_pop[best]
 
         # selection
-        # TODO: Add sigma scaling (possibly challenging)
         fit_pop_cp = fit_pop
         #fit_pop_norm = np.array(list(map(lambda y: norm(y, fit_pop_cp),fit_pop)))  # avoiding negative probabilities, as fitness is ranges from negative numbers
         fit_pop_scaled = sigma_scaling(fit_pop)
@@ -679,7 +670,7 @@ if __name__ == "__main__":  # Basically just checks if the script is being run d
 
     env.state_to_log()  # checks environment state
 
-    ####   Optimization for controller solution (best genotype-weights for phenotype-network): Ganetic Algorihm    ###
+    # Optimization for controller solution (best genotype-weights for phenotype-network): Ganetic Algorihm    ###
     ini = time.time()  # sets time marker
 
     main(env, args, cfg)
