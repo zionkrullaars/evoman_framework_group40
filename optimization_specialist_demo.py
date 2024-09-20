@@ -25,6 +25,9 @@ from nnlayers import tanh_activation, sigmoid_activation, softmax_activation
 np.random.seed(42)
 random.seed(42)
 
+def exponential_ranking(x: np.ndarray, c: float) -> np.ndarray:
+    return np.exp(c * x) / np.exp(c * x).sum()
+
 def sigscaler(x: np.ndarray, c: float) -> np.ndarray:
     x = x - (x.mean() - c * x.std())
     return x.clip(min=0.000000001)
@@ -37,7 +40,7 @@ def simulation(env,x):
 
 # normalizes
 def norm(x, pfit_pop):
-
+    
     if ( max(pfit_pop) - min(pfit_pop) ) > 0:
         x_norm = ( x - min(pfit_pop) )/( max(pfit_pop) - min(pfit_pop) )
     else:
@@ -49,7 +52,7 @@ def norm(x, pfit_pop):
 
 
 # evaluation
-def evaluate(x: list[list[tuple[np.ndarray, np.ndarray]]]) -> tuple[np.ndarray, np.ndarray]:
+def evaluate(env: Environment, x: list[list[tuple[np.ndarray, np.ndarray]]]) -> tuple[np.ndarray, np.ndarray]:
     """Evaluate the fitness of a population of individuals
 
     Args:
@@ -126,8 +129,10 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
     # Goes through pairs in the population and chooses two random fit individuals according to tournament
     probs = softmax_activation(fit_pop)
     for p in range(0,len(pop), 2):
-        chosen = np.random.choice(len(pop), 2 , p=probs, replace=False)
-        p1, p2 = pop[chosen[0]], pop[chosen[1]]
+        # chosen = np.random.choice(len(pop), 2 , p=probs, replace=False)
+        # p1, p2 = pop[chosen[0]], pop[chosen[1]]
+        p1 = tournament(pop, fit_pop, 1)
+        p2 = tournament(pop, fit_pop, 1)
 
         n_offspring =   np.random.randint(1, 6)
         offspring: list[list[tuple[np.ndarray, np.ndarray]]] = []
@@ -178,7 +183,7 @@ def blendcombine(layer_p1, layer_p2, cross_prob):
     bias = layer_p1[1]*cross_prob+layer_p2[1]*(1-cross_prob)
     return weights, bias
 
-def doomsday(pop: list[list[tuple[np.ndarray, np.ndarray]]],fit_pop:np.ndarray, other_info: np.ndarray, cfg: dict) -> tuple[list[list[tuple[np.ndarray, np.ndarray]]], np.ndarray, np.ndarray]:
+def doomsday(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]],fit_pop:np.ndarray, other_info: np.ndarray, cfg: dict) -> tuple[list[list[tuple[np.ndarray, np.ndarray]]], np.ndarray, np.ndarray]:
     """Kills the worst genomes, and replace with new best/random solutions
 
     Args:
@@ -189,19 +194,27 @@ def doomsday(pop: list[list[tuple[np.ndarray, np.ndarray]]],fit_pop:np.ndarray, 
         list[tuple[np.ndarray, np.ndarray]]: New population
     """
 
-    worst_indices = np.argsort(fit_pop)[(cfg['npop'] // 4)*3:] # A quarter of the individuals
+    worst_indices = np.argsort(fit_pop)[:len(pop) // 4] # A quarter of the individuals
     best_individual = pop[np.argmax(fit_pop)]
+    print("!!!NUKES INCOMING!!!")
 
     assert np.argmax(fit_pop) not in worst_indices, "Best individual is also one of the worst"
+    # Assert size of worst_indices > 1
+    assert worst_indices.shape[0] > 1, f"Worst indices is empty {worst_indices.shape}. Len fit pop {fit_pop.shape}, len pop: {len(pop)}"
 
     # Nuke the hell out of the worst, make them mutate like crazy
     for idx in worst_indices:
         for layer_idx, (weights, biases) in enumerate(pop[idx]):
-            nuke(cfg, weights, biases)
-
+            
+            prob = np.random.uniform(0, 1)
+            if prob <= 0.8:
+                weights, biases = nuke(cfg, weights, biases)
+            else:
+                weights = mutate(best_individual[layer_idx][0], cfg['mutation'])
+                biases = mutate(best_individual[layer_idx][1], cfg['mutation'])
             pop[idx][layer_idx] = (weights, biases)
 
-        fit_pop[idx], other_info[idx] = evaluate([pop[idx]])
+        fit_pop[idx], other_info[idx] = evaluate(env, [pop[idx]])
 
     return pop, fit_pop, other_info
 
@@ -210,8 +223,9 @@ def nuke(cfg, weights, biases):
     mutation_mask_b = np.random.uniform(0, 1, size=biases.shape) <= np.random.uniform(0, 1)
     weights[mutation_mask] = np.random.uniform(cfg['dom_l'], cfg['dom_u'], size=weights[mutation_mask].shape)
     biases[mutation_mask_b] = np.random.uniform(cfg['dom_l'], cfg['dom_u'], size=biases[mutation_mask_b].shape)
+    return weights, biases
 
-def generate_new_pop(npop: int, n_hidden_neurons: list[int]) -> tuple[list[list[tuple[np.ndarray, np.ndarray]]], np.ndarray, np.ndarray, tuple[int, float, float], int]:
+def generate_new_pop(envs: list[Environment], npop: int, n_hidden_neurons: list[int]) -> tuple[list[list[tuple[np.ndarray, np.ndarray]]], np.ndarray, np.ndarray, tuple[int, float, float], int]:
     """Generate a new population of individuals
 
     Args:
@@ -240,8 +254,8 @@ def generate_new_pop(npop: int, n_hidden_neurons: list[int]) -> tuple[list[list[
     #     ],
     # ]
     ###############################################################################
-        
-    fit_pop, other_info = evaluate(pop)
+    
+    fit_pop, other_info = evaluate(envs[-1], pop)
     best = int(np.argmax(fit_pop))
     mean = float(np.mean(fit_pop))
     std = float(np.std(fit_pop))
@@ -329,7 +343,7 @@ def cross_species(species_pop: list[list[list[tuple[np.ndarray, np.ndarray]]]], 
     
     return species_pop, species_fit, species_other
 
-def train(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, other_pop: np.ndarray, best: int, ini_g: int, cfg: dict) -> None:
+def train(envs: list[Environment], pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, other_pop: np.ndarray, best: int, ini_g: int, cfg: dict) -> None:
     """Train/Evolution loop for the genetic algorithm
 
     Args:
@@ -341,99 +355,50 @@ def train(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_
         cfg (dict): Configuration dictionary
     """
 
-    last_sol = fit_pop[best]
     fit_raw = fit_pop.copy()
-    c = 2.
-    notimproved = 0
+    
+    no_improvement = 0
+    last_best = fit_pop[best]
+    c = 1.
+    cur_env = 0
+    print(len(envs))
 
     species_pop, species_fit, species_other = make_species(pop, fit_pop, other_pop, cfg)
-    best_sols = [0]*cfg['species']
     last_sols = [0]*cfg['species']
     spec_notimproved = [0]*cfg['species']
 
     for g in range(ini_g+1, cfg['gens']):
         for i, popinfo in enumerate(zip(species_pop, species_fit, species_other)):
             pop, fit, other = popinfo
-            offspring = crossover(pop, fit, cfg['comb_meths'][i], cfg)  # crossover
-            fit_offspring, other_info = evaluate(offspring)   # evaluation
-            pop = pop + offspring
-            fit = np.append(fit,fit_offspring)
-            other = np.append(other_pop, other_info, axis=0)
-            # Add sigma scaling to fitness values
-            
-            
-            best = int(np.argmax(fit)) #best solution in generation
-            fit[best] = float(evaluate([pop[best] ])[0][0]) # repeats best eval, for stability issues
-            best_sols[i] = fit[best]
+            species_pop[i], species_fit[i], species_other[i], last_sols[i], spec_notimproved[i], c = train_spec(envs[cur_env], pop, fit, other, last_sols[i], spec_notimproved[i], cfg['comb_meths'][i], cfg['scaletype'][i], c, cfg)
 
-            fit_pop = sigscaler(fit, c)
-
-            # selection
-            fit_pop_cp = fit_pop.copy()
-            fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop))) # avoiding negative probabilities, as fitness is ranges from negative numbers
-            probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
-            # Assert there is no NaN in fit_pop
-            assert not np.isnan(fit_pop).any()
-            # Assert there are no negatives
-            assert not (fit_pop < 0).any()
-            # probs = softmax_activation(fit_pop)
-            chosen = np.random.choice(len(pop), cfg['npop'] // cfg['species'] , p=probs, replace=False)
-            chosen = np.append(chosen[1:],best)
-
-            newpop: list[list[tuple[np.ndarray, np.ndarray]]] = []
-            for c in chosen:
-                newpop.append(pop[c])
-            pop = newpop
-
-            newfit = []
-            newraw = []
-            newinfo = []
-            for c in chosen:
-                newinfo.append(other[c])
-                newraw.append(fit[c])
-                newfit.append(fit_pop[c])
-            fit_pop = np.array(newfit)
-            fit = np.array(newraw)
-            other = np.array(newinfo)
-
-
-            # searching new areas
-
-            if best_sols[i] <= last_sols[i]:
-                spec_notimproved[i] += 1
-            else:
-                last_sols[i] = best_sols[i]
-                spec_notimproved[i] = 0
-
-            if spec_notimproved[i] >= cfg['doomsteps']:
-
-                file_aux  = open(experiment_name+'/results.txt','a')
-                file_aux.write('\ndoomsday')
-                file_aux.close()
-                assert other.shape[0] == fit.shape[0]
-                pop, fit, other = doomsday(pop,fit, other, cfg)
-                # fit_raw, other_pop = evaluate(pop)
-                # fit_pop = sigscaler(fit.copy(), c)
-                spec_notimproved[i] = 0
-            
-            species_fit[i] = fit
-            species_other[i] = other
-            species_pop[i] = pop
-
-        fit_raw = [f for fit in species_fit for f in fit]
+        env = envs[cur_env]
+        # fit_raw = [f for fit in species_fit for f in fit]
         pop = [ind for species in species_pop for ind in species]
-        other_pop = np.array([info for species in species_other for info in species])
+        fit_raw = np.array([])
+        for spec in species_fit:
+            fit_raw = np.append(fit_raw, spec)
+        # Make empty other_pop array of size (0, 5)
+        other_pop = np.empty((0, species_other[0].shape[1]))
+
+        for spec in species_other:
+            other_pop = np.append(other_pop, spec, axis=0)
+        # fit_raw, other_pop = evaluate(env, pop)
+        # other_pop = np.array([info for species in species_other for info in species])
 
         best = int(np.argmax(fit_raw))
         std  =  np.std(fit_raw)
-        mean = np.mean(fit_raw)
-        # c += 0.05
+        mean = np.mean(fit_raw) 
+        c += min(2, 0.01)
 
+        if fit_raw[best] > 90:
+            cur_env += 1
+        cur_env = min(cur_env, len(envs)-1)
 
         # saves results
         file_aux  = open(experiment_name+'/results.txt','a')
         print( '\n GENERATION '+str(g)+' '+str(round(fit_raw[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)))
-        wandb.log({'Generation': ini_g, 'Best Fitness': fit_raw[best], 'Mean Fitness': mean, 'Std Fitness': std, 'Best Player Health': other_pop[best][0], 'Best Enemy Health': other_pop[best][1], 'Best Timesteps': other_pop[best][2],'Gain': other_pop[best][3], 'Best Dead Enemies': other_pop[best][4]})
+        wandb.log({'Generation': ini_g, 'Best Fitness': fit_raw[best], 'Mean Fitness': mean, 'Std Fitness': std, 'Best Player Health': other_pop[best][0], 'Best Enemy Health': other_pop[best][1], 'Best Timesteps': other_pop[best][2],'Gain': other_pop[best][3], 'Best Dead Enemies': other_pop[best][4], 'Current Env': cur_env})
         file_aux.write('\n'+str(g)+' '+str(round(fit_raw[best],6))+' '+str(round(mean,6))+' '+str(round(std,6))   )
         file_aux.close()
 
@@ -448,11 +413,21 @@ def train(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_
         file.close()
 
         # saves simulation state
-        solutions = [pop, fit_pop]
+        solutions = [pop, fit_raw]
         env.update_solutions(solutions)
         env.save_state()
 
         species_pop, species_fit, species_other = cross_species(species_pop, species_fit, species_other, cfg)
+        cur_best = fit_raw[best]
+        if cur_best <= last_best:
+            no_improvement += 1
+        else:
+            last_best = cur_best
+            no_improvement = 0
+        
+        if no_improvement >= 250:
+            cur_env += 1
+            cur_env = min(cur_env, len(envs)-1)
 
     fim = time.time() # prints total execution time for experiment
     print( '\nExecution time: '+str(round((fim-ini)/60))+' minutes \n')
@@ -462,7 +437,69 @@ def train(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_
     file = open(experiment_name+'/neuroended', 'w')  # saves control (simulation has ended) file for bash loop file
     file.close()
 
-    env.state_to_log() # checks environment state
+    env.state_to_log() 
+
+def train_spec(env, pop, fit, other_pop, last_sol, spec_notimproved, comb_meth, scale_type, c, cfg):
+    offspring = crossover(pop, fit, comb_meth, cfg)  # crossover
+    fit_offspring, other_info = evaluate(env, offspring)   # evaluation
+    pop = pop + offspring
+    fit = np.append(fit,fit_offspring)
+    other = np.append(other_pop, other_info, axis=0)
+    
+    best = int(np.argmax(fit)) #best solution in generation
+    fit[best] = float(evaluate(env, [pop[best] ])[0][0]) # repeats best eval, for stability issues
+    best_sol = fit[best]
+
+    if scale_type == 1:
+        fit_pop = sigscaler(fit, c)
+    else:
+        fit_pop = fit.copy()
+
+    # selection
+    fit_pop_cp = fit_pop.copy()
+    fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop))) # avoiding negative probabilities, as fitness is ranges from negative numbers
+    probs = (fit_pop_norm)/(fit_pop_norm).sum()
+    fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop))) # avoiding negative probabilities, as fitness is ranges from negative numbers
+    probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
+    # probs = softmax_activation(fit_pop)
+    chosen = np.random.choice(len(pop), cfg['npop'] // cfg['species'] , p=probs, replace=False)
+    chosen = np.append(chosen[1:],best)
+
+    newpop: list[list[tuple[np.ndarray, np.ndarray]]] = []
+    newfit = []
+    newraw = []
+    newinfo = []
+    for c in chosen:
+        newpop.append(pop[c])
+        newinfo.append(other[c])
+        newraw.append(fit[c])
+        newfit.append(fit_pop[c])
+    pop = newpop
+    fit_pop = np.array(newfit)
+    fit = np.array(newraw)
+    other = np.array(newinfo)
+
+    # searching new areas
+    if best_sol <= last_sol:
+        spec_notimproved += 1
+    else:
+        last_sol = best_sol
+        spec_notimproved = 0
+
+    if spec_notimproved >= cfg['doomsteps']:
+        file_aux  = open(experiment_name+'/results.txt','a')
+        file_aux.write('\ndoomsday')
+        file_aux.close()
+        assert other.shape[0] == fit.shape[0]
+        pop, fit, other = doomsday(env, pop,fit, other, cfg)
+        # fit_raw, other_pop = evaluate(pop)
+        # fit_pop = sigscaler(fit.copy(), c)
+        spec_notimproved = 0
+            
+    # species_fit[i] = fit
+    # species_other[i] = other
+    # species_pop[i] = pop
+    return pop, fit, other, last_sol, spec_notimproved, c
 
 def print_dict(d: dict) -> None:
     """Print a dictionary
@@ -473,7 +510,7 @@ def print_dict(d: dict) -> None:
     for k, v in d.items():
         print(f'{k}: {v}')
 
-def main(env: Environment, args: argparse.Namespace, cfg: dict) -> None:
+def main(envs: list[Environment], args: argparse.Namespace, cfg: dict) -> None:
     """Main function for the genetic algorithm
 
     Args:
@@ -494,7 +531,7 @@ def main(env: Environment, args: argparse.Namespace, cfg: dict) -> None:
     # initializes population loading old solutions or generating new ones
     if not os.path.exists(args.experiment_name+'/evoman_solstate') or args.new_evolution:
         print( '\nNEW EVOLUTION\n')
-        pop, fit_pop, other_info, fit_pop_stats, ini_g = generate_new_pop(cfg['npop'], cfg['archetecture'])
+        pop, fit_pop, other_info, fit_pop_stats, ini_g = generate_new_pop(envs, cfg['npop'], cfg['archetecture'])
 
     else:
         print( '\nCONTINUING EVOLUTION\n')
@@ -508,7 +545,7 @@ def main(env: Environment, args: argparse.Namespace, cfg: dict) -> None:
     file_aux.write('\n'+str(ini_g)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6))   )
     file_aux.close()
 
-    train(env, pop, fit_pop, other_info, best, ini_g, cfg)
+    train(envs, pop, fit_pop, other_info, best, ini_g, cfg)
 
 if __name__ == "__main__": # Basically just checks if the script is being run directly or imported as a module
 
@@ -549,20 +586,25 @@ if __name__ == "__main__": # Basically just checks if the script is being run di
         os.makedirs(experiment_name)
 
     # initializes simulation in individual evolution mode, for single static enemy.
-    env = Environment(experiment_name=experiment_name,
-                    enemies=[1,2,3,4,5,6,7,8],
-                    multiplemode="yes",
-                    playermode="ai",
-                    player_controller=player_controller(cfg['archetecture']), # Initialise player with specified archetecture
-                    enemymode="static",
-                    level=2,
-                    speed="fastest",
-                    visuals=False)
-
-    env.state_to_log() # checks environment state
+    envs = []
+    enemies = [[8],[7,8],[6,7,8],[5,6,7,8],[4,5,6,7,8],[3,4,5,6,7,8],[2,3,4,5,6,7,8],[1,2,3,4,5,6,7,8]]
+    for i in range(cfg['species']):
+        if not os.path.exists(experiment_name+f'{i}'):
+            os.makedirs(experiment_name+f'{i}')
+        env = Environment(experiment_name=experiment_name+f'{i}',
+                        enemies=enemies[i],
+                        multiplemode= 'yes' if len(enemies[i]) > 1 else 'no',
+                        playermode="ai",
+                        player_controller=player_controller(cfg['archetecture']), # Initialise player with specified archetecture
+                        enemymode="static",
+                        level=2,
+                        speed="fastest",
+                        visuals=False)
+        env.state_to_log() # checks environment state
+        envs.append(env)
 
 
     ####   Optimization for controller solution (best genotype-weights for phenotype-network): Ganetic Algorihm    ###
     ini = time.time()  # sets time marker
 
-    main(env, args, cfg)
+    main(envs, args, cfg)

@@ -12,11 +12,297 @@ import pygame
 from pygame.locals import *
 import struct
 import evoman.tmx as tmx
+from multiprocessing import Process
+from multiprocessing.pool import ThreadPool as Pool
 
 from evoman.player import *
 from evoman.controller import Controller
 from evoman.sensors import Sensors
 
+def checks_params(params):
+
+    # validates parameters values
+
+    if params['multiplemode'] == "yes" and len(params['enemies']) < 2:
+        print("ERROR: 'enemies' must contain more than one enemy for multiple mode.")
+        sys.exit(0)
+
+    if params['multiplemode'] not in ('yes','no'):
+        print("ERROR: 'multiplemode' value must be 'yes' or 'no'.")
+        sys.exit(0)
+
+    if params['speed'] not in ('normal','fastest'):
+        print("ERROR: 'speed' value must be 'normal' or 'fastest'.")
+        sys.exit(0)
+
+    if params['clockprec'] not in ('low','medium'):
+        print("ERROR: 'clockprec' value must be 'low' or 'medium'.")
+        sys.exit(0)
+
+    if params['sound'] not in ('on','off'):
+        print("ERROR: 'sound' value must be 'on' or 'off'.")
+        sys.exit(0)
+
+    if type(params['timeexpire']) is not int:
+        print("ERROR: 'timeexpire' must be integer.")
+        sys.exit(0)
+
+    if type(params['level']) is not int:
+        print("ERROR: 'level' must be integer.")
+        sys.exit(0)
+
+    if type(params['overturetime']) is not int:
+        print("ERROR: 'overturetime' must be integer.")
+        sys.exit(0)
+
+
+    # checks parameters consistency
+    if params['multiplemode'] == "no" and len(params['enemies']) > 1:
+        print("MESSAGE: there is more than one enemy in 'enemies' list although the mode is not multiple.")
+
+    if params['level'] < 1 or params['level'] > 3:
+        print("MESSAGE: 'level' chosen is out of recommended (tested).")
+
+def load_sprites(enemyn, enemyImports, screen, level):
+
+    # loads enemy and map
+    if not enemyn in enemyImports:
+        enemyImports[enemyn] = __import__('evoman.enemy'+str(enemyn), fromlist=['enemy'+str(enemyn)])
+    enemy = enemyImports[enemyn]
+    tilemap = tmx.load(enemy.tilemap, screen.get_size())  # map
+
+    sprite_e = tmx.SpriteLayer()
+    start_cell = tilemap.layers['triggers'].find('enemy')[0]
+    enemy = enemy.Enemy((start_cell.px, start_cell.py), sprite_e, visuals=False)
+    tilemap.layers.append(sprite_e)  # enemy
+
+    # loads player
+    sprite_p = tmx.SpriteLayer()
+    start_cell = tilemap.layers['triggers'].find('player')[0]
+    player = Player((start_cell.px, start_cell.py), enemyn, level, sprite_p, visuals =False)
+    tilemap.layers.append(sprite_p)
+
+    player.sensors = Sensors()
+    enemy.sensors = Sensors()
+
+    return player, enemy, tilemap
+
+def cons_multi(values):
+    return values.mean() - values.std()
+
+def play_sep(params,pcont="None"):
+
+    if params['multiplemode'] == "yes":
+        vfitness, vplayerlife, venemylife, vtime = [],[],[],[]
+        for e in params['enemies']:
+
+            fitness, playerlife, enemylife, time  = run_single_sep(e,pcont,params)
+            vfitness.append(fitness)
+            vplayerlife.append(playerlife)
+            venemylife.append(enemylife)
+            vtime.append(time)
+
+        vfitness = cons_multi(numpy.array(vfitness))
+        vplayerlife_new = cons_multi(numpy.array(vplayerlife))
+        venemylife_new = cons_multi(numpy.array(venemylife))
+        vtime = cons_multi(numpy.array(vtime))
+
+        enemylifesum = numpy.sum(numpy.array(venemylife))
+        playerlifesum = numpy.sum(numpy.array(vplayerlife))
+
+        gain = playerlifesum - enemylifesum
+
+        # Count number of enemylife where enemy life == 0
+        dead_enemies = numpy.count_nonzero(numpy.array(venemylife) == 0) / len(venemylife)
+
+
+        return    vfitness, vplayerlife_new, venemylife_new, vtime, gain, dead_enemies
+    else:
+        fitness, playerlife, enemylife, time = run_single_sep(params['enemyn'],pcont, params)
+        gain = playerlife - enemylife
+        dead_enemies = 1 if enemylife == 0 else 0
+        return fitness, playerlife, enemylife, time, gain, dead_enemies
+
+def runWrapper(env,e,pcont,econt):
+    return env.run_single(e,pcont,econt)
+
+def run_single_sep(enemyn, pcont, params):
+    """Run a single game simulation.
+
+    Args:
+        enemyn: The enemy number.
+        pcont: The player controller.
+        econt: The enemy controller.
+        params: A dictionary containing the necessary parameters from the environment.
+
+    Returns:
+        A tuple containing fitness, player life, enemy life, and time.
+    """
+    # Extract parameters from the dictionary
+    clock = pygame.time.Clock()
+    flags =  DOUBLEBUF
+    screen = pygame.display.set_mode((736, 512), flags)
+    clockprec = params['clockprec']
+    speed = params['speed']
+    playermode = params['playermode']
+    sound = params['sound']
+    overturetime = params['overturetime']
+    visuals = False
+    timeexpire = params['timeexpire']
+    enemyImports = {e: __import__('evoman.enemy'+str(e), fromlist=['enemy'+str(e)]) for e in params['enemies']}
+
+    def fitness_single(enemylife, playerlife, time):
+        return 0.9*(100 - enemylife) + 0.1*playerlife - numpy.log(time)
+
+    # sets controllers
+    pcont = pcont
+
+    checks_params(params)
+
+    enemyn = enemyn  # sets the current enemy
+    ends = 0
+    time = 0
+    freeze_p = False
+    freeze_e = False
+    start = False
+
+    if enemyn not in enemyImports:
+        enemyImports[enemyn] = __import__('evoman.enemy' + str(enemyn), fromlist=['enemy' + str(enemyn)])
+    enemy = enemyImports[enemyn]
+
+    player, enemy, tilemap = load_sprites(enemyn, enemyImports, screen, params['level'])
+
+    # game main loop
+    while True:
+        # adjusts frames rate for defining game speed
+        if clockprec == "medium":  # medium clock precision
+            if speed == 'normal':
+                clock.tick_busy_loop(30)
+            elif speed == 'fastest':
+                clock.tick_busy_loop()
+        else:  # low clock precision
+            if speed == 'normal':
+                clock.tick(30)
+            elif speed == 'fastest':
+                clock.tick()
+
+        # game timer
+        time += 1
+        params['time'] = time
+        if playermode == "human" or sound == "on":
+            # sound effects
+            if sound == "on" and time == 1:
+                sound = pygame.mixer.Sound('evoman/sounds/open.wav')
+                c = pygame.mixer.Channel(1)
+                c.set_volume(1)
+                c.play(sound, loops=10)
+
+            if time > overturetime:  # delays game start a little bit for human mode
+                start = True
+        else:
+            start = True
+
+        # checks screen closing button
+        event = pygame.event.get()
+        for e in event:
+            if e.type == pygame.QUIT:
+                return
+            if e.type == pygame.KEYDOWN and e.key == pygame.K_ESCAPE:
+                return
+
+        # updates objects and draws its items on screen
+        tilemap.update(33 / 1000., params)
+
+        if visuals:
+            screen.fill((250, 250, 250))
+            tilemap.draw(screen)
+
+            # player life bar
+            vbar = int(100 * (1 - (player.life / float(player.max_life))))
+            pygame.draw.line(screen, (0, 0, 0), [40, 40], [140, 40], 2)
+            pygame.draw.line(screen, (0, 0, 0), [40, 45], [140, 45], 5)
+            pygame.draw.line(screen, (150, 24, 25), [40, 45], [140 - vbar, 45], 5)
+            pygame.draw.line(screen, (0, 0, 0), [40, 49], [140, 49], 2)
+
+            # enemy life bar
+            vbar = int(100 * (1 - (enemy.life / float(enemy.max_life))))
+            pygame.draw.line(screen, (0, 0, 0), [590, 40], [695, 40], 2)
+            pygame.draw.line(screen, (0, 0, 0), [590, 45], [695, 45], 5)
+            pygame.draw.line(screen, (194, 118, 55), [590, 45], [695 - vbar, 45], 5)
+            pygame.draw.line(screen, (0, 0, 0), [590, 49], [695, 49], 2)
+
+        # gets fitness for training agents
+        fitness = fitness_single(enemy.life, player.life, time)
+
+        # returns results of the run
+        def return_run():
+            return float(fitness), float(player.life), float(enemy.life), int(time)
+
+        if start == False and playermode == "human":
+            myfont = pygame.font.SysFont("Comic sams", 100)
+            pygame.font.Font.set_bold
+            screen.blit(myfont.render("Player", 1, (150, 24, 25)), (50, 180))
+            screen.blit(myfont.render("  VS  ", 1, (50, 24, 25)), (250, 180))
+            screen.blit(myfont.render("Enemy " + str(enemyn), 1, (194, 118, 55)), (400, 180))
+
+        # checks player life status
+        if player.life == 0:
+            ends -= 1
+
+            # tells user that player has lost
+            if playermode == "human":
+                myfont = pygame.font.SysFont("Comic sams", 100)
+                pygame.font.Font.set_bold
+                screen.blit(myfont.render(" Enemy wins", 1, (194, 118, 55)), (150, 180))
+
+            player.kill()  # removes player sprite
+            enemy.kill()  # removes enemy sprite
+
+            if playermode == "human":
+                # delays run finalization for human mode
+                if ends == -overturetime:
+                    return return_run()
+            else:
+                return return_run()
+
+        # checks enemy life status
+        if enemy.life == 0:
+            ends -= 1
+            if visuals:
+                screen.fill((250, 250, 250))
+                tilemap.draw(screen)
+
+            # tells user that player has won
+            if playermode == "human":
+                myfont = pygame.font.SysFont("Comic sams", 100)
+                screen.blit(myfont.render(" Player wins ", 1, (150, 24, 25)), (170, 180))
+
+            enemy.kill()  # removes enemy sprite
+            player.kill()  # removes player sprite
+
+            if playermode == "human":
+                if ends == -overturetime:
+                    return return_run()
+            else:
+                return return_run()
+
+        if params['loadplayer'] == "no":  # removes player sprite from game
+            player.kill()
+
+        if params['loadenemy'] == "no":  # removes enemy sprite from game
+            enemy.kill()
+
+        # updates screen
+        if visuals:
+            pygame.display.flip()
+
+        # game runtime limit
+        if playermode == 'ai':
+            if time >= enemy.timeexpire:
+                return return_run()
+        else:
+            if time >= timeexpire:
+                return return_run()
 
 # main class
 class Environment(object):
@@ -512,8 +798,7 @@ class Environment(object):
             # returns results of the run
             def return_run():
                 #self.print_logs("RUN: run status: enemy: "+str(self.enemyn)+"; fitness: " + str(fitness) + "; player life: " + str(self.player.life)  + "; enemy life: " + str(self.enemy.life) + "; time: " + str(self.time))
-
-                return  fitness, self.player.life, self.enemy.life, self.time
+                return  float(fitness), float(self.player.life), float(self.enemy.life), int(self.time)
 
 
 
@@ -596,6 +881,15 @@ class Environment(object):
     def multiple(self,pcont,econt):
 
         vfitness, vplayerlife, venemylife, vtime = [],[],[],[]
+
+        # with Pool(processes=8) as pool:
+        #     # Use starmap
+        #     results = pool.starmap(self.run_single, [(e,pcont,econt) for e in self.enemies])
+        #     for res in results:
+        #         vfitness.append(res[0])
+        #         vplayerlife.append(res[1])
+        #         venemylife.append(res[2])
+        #         vtime.append(res[3])
         for e in self.enemies:
 
             fitness, playerlife, enemylife, time  = self.run_single(e,pcont,econt)
@@ -605,11 +899,20 @@ class Environment(object):
             vtime.append(time)
 
         vfitness = self.cons_multi(numpy.array(vfitness))
-        vplayerlife = self.cons_multi(numpy.array(vplayerlife))
-        venemylife = self.cons_multi(numpy.array(venemylife))
+        vplayerlife_new = self.cons_multi(numpy.array(vplayerlife))
+        venemylife_new = self.cons_multi(numpy.array(venemylife))
         vtime = self.cons_multi(numpy.array(vtime))
 
-        return    vfitness, vplayerlife, venemylife, vtime
+        enemylifesum = numpy.sum(numpy.array(venemylife))
+        playerlifesum = numpy.sum(numpy.array(vplayerlife))
+
+        gain = playerlifesum - enemylifesum
+
+        # Count number of enemylife where enemy life == 0
+        dead_enemies = numpy.count_nonzero(numpy.array(venemylife) == 0) / len(venemylife)
+
+
+        return    vfitness, vplayerlife_new, venemylife_new, vtime, gain, dead_enemies
 
 
     # checks objective mode
@@ -618,4 +921,7 @@ class Environment(object):
         if self.multiplemode == "yes":
             return self.multiple(pcont,econt)
         else:
-            return self.run_single(self.enemies[0],pcont,econt)
+            fitness, playerlife, enemylife, time = self.run_single(self.enemies[0],pcont,econt)
+            gain = playerlife - enemylife
+            dead_enemies = 1 if enemylife == 0 else 0
+            return fitness, playerlife, enemylife, time, gain, dead_enemies

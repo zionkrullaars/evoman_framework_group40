@@ -5,5 +5,5 @@ dom_u: 1                          # Upper bound of the domain
 dom_l: -1                          # Lower bound of the domain
 npop: 100                         # Number of population
 gens: 500                         # Number of generations
-mutation: 0.5                     # Mutation rate
+mutation: 0.3                     # Mutation rate
 last_best: 0                      # Last best value

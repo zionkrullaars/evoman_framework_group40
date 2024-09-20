@@ -30,7 +30,7 @@ if not os.path.exists(experiment_name):
 
 # initializes simulation in multi evolution mode, for multiple static enemies.
 env = Environment(experiment_name=experiment_name,
-                  enemies=[7,8],
+                  enemies=[6,7,8],
                   multiplemode="yes",
                   playermode="ai",
                   player_controller=player_controller(n_hidden_neurons),
@@ -69,7 +69,7 @@ np.random.seed(420)
 
 # runs simulation
 def simulation(env,x):
-    f,p,e,t = env.play(pcont=x)
+    f,p,e,t,g,de = env.play(pcont=x)
     return f
 
 # normalizes

@@ -1,0 +1,14 @@
+experiment_name: 'dummy'          # Name of the experiment
+archetecture: [10]           # Number of neurons in each layer
+activation: ['relu','relu','sig'] # Activation function for each layer
+dom_u: 1                          # Upper bound of the domain
+dom_l: -1                          # Lower bound of the domain
+npop: 250                         # Number of population
+gens: 5000                         # Number of generations
+mutation: 0.1                     # Mutation rate
+species: 5                        # Number of species
+spec_cross: 0.1                  # Species crossover rate
+comb_meths: [0,1,0,1,0]           # Combination methods
+scaletype: [1,1,0,0,1]            # Scaling type
+doomsteps: 15                     # Number of doomsteps
+last_best: 0                      # Last best value
