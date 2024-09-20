@@ -7,16 +7,18 @@
 from evoman.controller import Controller
 import numpy as np
 
-
+# Define the sigmoid activation function to squash the output of the neurons
 def sigmoid_activation(x):
 	return 1./(1.+np.exp(-x))
 
 
 # implements controller structure for player
 class player_controller(Controller):
+	# _n_hidden: list[int] - The amount of neurons in hidden layer
 	def __init__(self, _n_hidden):
 		self.n_hidden = [_n_hidden]
 
+	# controller: np.ndarray - The weights and biases for the network
 	def set(self,controller, n_inputs):
 		# Number of hidden neurons
 
@@ -25,17 +27,16 @@ class player_controller(Controller):
 
 			# Biases for the n hidden neurons
 			self.bias1 = controller[:self.n_hidden[0]].reshape(1, self.n_hidden[0])
-			# print(self.bias1.shape)
 			# Weights for the connections from the inputs to the hidden nodes
 			weights1_slice = n_inputs * self.n_hidden[0] + self.n_hidden[0]
-			# print(weights1_slice)
+			# weights1 is a matrix of shape (n_inputs, n_hidden[0]), each row is the weights
+			# for a neuron in the hidden layer, each column is a specific input
 			self.weights1 = controller[self.n_hidden[0]:weights1_slice].reshape((n_inputs, self.n_hidden[0]))
-			# print(self.weights1.shape)
 
 			# Outputs activation first layer.
 
 
-			# Preparing the weights and biases from the controller of layer 2
+			# Preparing the weights and biases from the controller of output layer
 			self.bias2 = controller[weights1_slice:weights1_slice + 5].reshape(1, 5)
 			self.weights2 = controller[weights1_slice + 5:].reshape((self.n_hidden[0], 5))
 
