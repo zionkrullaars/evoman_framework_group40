@@ -702,37 +702,42 @@ if __name__ == "__main__":  # Basically just checks if the script is being run d
     if headless:
         os.environ["SDL_VIDEODRIVER"] = "dummy"  # Turn off videodriver when running 
     
-    for i in range(10):
-        # Initialize Weights and Biases
-        wandb.init(
-            # set the wandb project where this run will be logged
-            project="Evoman Project 1",
+    enemies = [6,7,8]
+    for enemy in enemies:
+        for i in range(10):
+            experiment_name = f'Evoman_Enemy{enemy}_StandMult{i}'
 
-            # track hyperparameters and run metadata
-            name=args.experiment_name,
-            config=cfg
-        )
+            # Create a folder to store the experiment
+            if not os.path.exists(experiment_name):
+                os.makedirs(experiment_name)
 
-        # Create a folder to store the experiment
-        experiment_name = args.experiment_name
-        if not os.path.exists(experiment_name):
-            os.makedirs(experiment_name)
+            # Initialize Weights and Biases
+            wandb.init(
+                # set the wandb project where this run will be logged
+                project="Evoman Project 1",
 
-        # initializes simulation in individual evolution mode, for single static enemy.
-        env = Environment(experiment_name=experiment_name,
-                        enemies=[8],
-                        playermode="ai",
-                        player_controller=player_controller(cfg['archetecture']),
-                        # Initialise player with specified archetecture
-                        enemymode="static",
-                        level=3,
-                        speed="fastest",
-                        visuals=False)
+                # track hyperparameters and run metadata
+                name=experiment_name,
+                config=cfg
+            )
 
-        env.state_to_log()  # checks environment state
+            
 
-        # Optimization for controller solution (best genotype-weights for phenotype-network): Ganetic Algorihm    ###
-        ini = time.time()  # sets time marker
+            # initializes simulation in individual evolution mode, for single static enemy.
+            env = Environment(experiment_name=experiment_name,
+                            enemies=[8],
+                            playermode="ai",
+                            player_controller=player_controller(cfg['archetecture']),
+                            # Initialise player with specified archetecture
+                            enemymode="static",
+                            level=3,
+                            speed="fastest",
+                            visuals=False)
 
-        main(env, args, cfg)
-        wandb.finish()
+            env.state_to_log()  # checks environment state
+
+            # Optimization for controller solution (best genotype-weights for phenotype-network): Ganetic Algorihm    ###
+            ini = time.time()  # sets time marker
+
+            main(env, args, cfg)
+            wandb.finish()
