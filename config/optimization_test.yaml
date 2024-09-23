@@ -6,4 +6,5 @@ dom_l: -1                          # Lower bound of the domain
 npop: 100                         # Number of population
 gens: 500                         # Number of generations
 mutation: 0.2                     # Mutation rate
+muttype: 'standard'            # Mutation type
 last_best: 0                      # Last best value

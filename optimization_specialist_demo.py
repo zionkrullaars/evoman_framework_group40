@@ -20,13 +20,15 @@ import glob, os
 import gzip, pickle, yaml
 import argparse
 import math
+import wandb
 
+from multiprocessing import Pool
 
 # runs simulation
-def simulation(env, x):
+def simulation(env, x) -> tuple[float, tuple[float, float, float]]:
     # use pcont(bias and weights of nn)as input, return fitness
     f, p, e, t = env.play(pcont=x)
-    return f
+    return f, (p, e, t)
 
 
 # normalizes x to be between 0 and 1
@@ -42,7 +44,7 @@ def norm(x, pfit_pop):
 
 
 # evaluation generation x's fitness
-def evaluate(x: list[list[tuple[np.ndarray, np.ndarray]]]) -> np.ndarray:
+def evaluate(x: list[list[tuple[np.ndarray, np.ndarray]]]) -> tuple[np.ndarray, np.ndarray]:
     """Evaluate the fitness of a population of individuals
 
     Args:
@@ -51,7 +53,9 @@ def evaluate(x: list[list[tuple[np.ndarray, np.ndarray]]]) -> np.ndarray:
     Returns:
         np.ndarray: List of fitness values for each individual in the population of size (pop_size*1)
     """
-    return np.array(list(map(lambda y: simulation(env, y), x)))
+    # fitness, extra_info = list(map(lambda y: simulation(env, y), x))
+    fitness, extra_info = zip(*list(map(lambda y: simulation(env, y), x)))
+    return np.array(fitness), np.array(extra_info)
 
 
 '''
@@ -208,7 +212,7 @@ def swap_mutation(vals: np.ndarray, probability: float) -> np.ndarray:
     return vals
 
 
-def parent_similarity(parent1, parent2, threshold=0.3):
+def parent_similarity(parent1, parent2, threshold=1.):
     """
     Checks if two parents are too similar based on the Euclidean distance.
 
@@ -222,7 +226,7 @@ def parent_similarity(parent1, parent2, threshold=0.3):
     distance = 0
     # Calculate the Euclidean distance by iterating through each layer's weights
     for (weights1, biases1), (weights2, biases2) in zip(parent1, parent2):
-        # Calculate the Euclidean distance between the weights
+
         distance += np.linalg.norm(weights1 - weights2)
 
         # Calculate the Euclidean distance between the biases
@@ -235,6 +239,7 @@ def parent_similarity(parent1, parent2, threshold=0.3):
 # Crossover
 def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]],
               fit_pop: np.ndarray,
+              gen: int,
               cfg: dict,
               n_parent: int = 5) -> list[list[tuple[np.ndarray, np.ndarray]]]:
     """Crossover function to generate offspring from the population
@@ -257,6 +262,7 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]],
     # Control the batch nums for crossover
     for p in range(0, len(pop), n_parent):
         parents = []
+        ogparents = []
         parent_shapes = []
 
         # Select `parent_amt` parents using tournament selection
@@ -266,8 +272,11 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]],
             shape = []
 
             # Incest prevention
-            while any(parent_similarity(parent, existing_parent) for existing_parent in parents):
-                parent, del_fit = tournament(pop_copy, fit_pop)
+            # if len(ogparents) > 0:
+            #     while any(parent_similarity(parent, existing_parent) for existing_parent in ogparents):
+            #         parent, del_fit = tournament(pop_copy, fit_pop)
+
+            ogparents.append(parent)
 
             # Remove the parent from the population
             pop_copy.pop(del_fit)
@@ -313,34 +322,41 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]],
 
         n_offspring = 5
 
-        for offset in range(0, n_offspring):
-            child: list[tuple[np.ndarray, np.ndarray]] = []
+    for offset in range(0, n_offspring):
+        child: list[tuple[np.ndarray, np.ndarray]] = []
 
-            # Go through each layer of the parents
-            for layerNum in range(len(parents[0])):
-                weights = np.array(0)
-                bias = np.array(0)
+        # Go through each layer of the parents
+        for layerNum in range(len(parents[0])):
+            weights = np.array(0)
+            bias = np.array(0)
 
-                for snip in range(len(snips) - 1):
-                    snippetW = parents[(snip + offset) % 5][layerNum][0][snip]
-                    snippetB = parents[(snip + offset) % 5][layerNum][1][snip]
-                    weights = np.append(weights, snippetW)
-                    bias = np.append(bias, snippetB)
+            for snip in range(len(snips) - 1):
+                snippetW = parents[(snip + offset) % 5][layerNum][0][snip]
+                snippetB = parents[(snip + offset) % 5][layerNum][1][snip]
+                weights = np.append(weights, snippetW)
+                bias = np.append(bias, snippetB)
 
-                # mutation
-                weights = weights.reshape(parent_shapes[0][layerNum][0])
-                bias = bias.reshape(parent_shapes[0][layerNum][1])
+            # mutation
+            weights = weights.reshape(parent_shapes[0][layerNum][0])
+            bias = bias.reshape(parent_shapes[0][layerNum][1])
 
+            if cfg['muttype'] == 'standard':
                 weights = standard_mutate(weights, cfg['mutation'])
                 bias = standard_mutate(bias, cfg['mutation'])
+            elif cfg['muttype'] == 'nonlinear':
+                weights = nonlinear_mutation(weights, cfg['mutation'])
+                bias = nonlinear_mutation(bias, cfg['mutation'])
+            elif cfg['muttype'] == 'non_uniform':
+                weights = non_uniform_mutation(weights, cfg['mutation'], gen, cfg['gens'])
+                bias = non_uniform_mutation(bias, cfg['mutation'], gen, cfg['gens'])
 
-                # limit between -1 and 1
-                bias = bias.clip(cfg['dom_l'], cfg['dom_u'])
-                weights = weights.clip(cfg['dom_l'], cfg['dom_u'])
+            # limit between -1 and 1
+            bias = bias.clip(cfg['dom_l'], cfg['dom_u'])
+            weights = weights.clip(cfg['dom_l'], cfg['dom_u'])
 
-                layerChild = (weights, bias)
-                child.append(layerChild)
-            offspring.append(child)
+            layerChild = (weights, bias)
+            child.append(layerChild)
+        offspring.append(child)
 
     return offspring
 
@@ -352,7 +368,7 @@ def getSnippet(vals, startSnip, endSnip, subtract):
     return wSnip
 
 
-def doomsday(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, cfg: dict) -> tuple[
+def doomsday(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, info_pop: np.ndarray, cfg: dict) -> tuple[
     list[list[tuple[np.ndarray, np.ndarray]]], np.ndarray]:
     """Kills the worst genomes, and replace with new best/random solutions
 
@@ -379,7 +395,8 @@ def doomsday(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray
                         pop[o][l][v][i] = pop[order[-1:][0]][l][v][
                             i]  # dna from best, which is the last index (-1) of the order list
 
-        val = evaluate([pop[o]])  # Evaluate the new individual
+        val, extra_info = evaluate([pop[o]])  # Evaluate the new individual
+        info_pop[o] = extra_info[0]  # Update the fitness value
         fit_pop[o] = val[0]
 
     return pop, fit_pop
@@ -417,14 +434,14 @@ def generate_new_pop(npop: int, n_hidden_neurons: list[int]) -> tuple[
 
     ###############################################################################
 
-    fit_pop = evaluate(pop)
+    fit_pop, extra_info = evaluate(pop)
     best = int(np.argmax(fit_pop))
     mean = float(np.mean(fit_pop))
     std = float(np.std(fit_pop))
     ini_g = int(0)
     solutions = [pop, fit_pop]
     env.update_solutions(solutions)
-    return pop, fit_pop, (best, mean, std), ini_g
+    return pop, fit_pop, extra_info, (best, mean, std), ini_g
 
 
 def load_pop(env: Environment, experiment_name: str) -> tuple[
@@ -453,7 +470,7 @@ def load_pop(env: Environment, experiment_name: str) -> tuple[
     return pop, fit_pop, (best, mean, std), ini_g
 
 
-def train(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, best: int, ini_g: int,
+def train(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, info_pop: np.ndarray, best: int, ini_g: int,
           cfg: dict) -> None:
     """Train/Evolution loop for the genetic algorithm
 
@@ -473,20 +490,23 @@ def train(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_
     for i in range(ini_g + 1, cfg['gens']):
 
         # generation new offspring using crossover
-        offspring = crossover(pop, fit_pop, cfg)  # crossover
-        fit_offspring = evaluate(offspring)  # evaluation
+        offspring = crossover(pop, fit_pop, i, cfg)  # crossover
+        fit_offspring, info_offspring = evaluate(offspring)  # evaluation
 
         # add offspring to current population
         pop = pop + offspring
         fit_pop = np.append(fit_pop, fit_offspring)
+        info_pop = np.append(info_pop, info_offspring, axis=0)
 
         # Get the best solution
         best = int(np.argmax(fit_pop))  # best solution in generation
-        fit_pop[best] = float(evaluate([pop[best]])[0])  # repeats best eval, for stability issues
+        best_fit, best_info = evaluate([pop[best]])  # repeats best eval, for stability issues
+        fit_pop[best] = float(best_fit[0])
+        info_pop[best] = best_info[0]
         best_sol = fit_pop[best]
 
         # selection
-        fit_pop_cp = fit_pop
+        fit_pop_cp = fit_pop.copy()
         #fit_pop_norm = np.array(list(map(lambda y: norm(y, fit_pop_cp),fit_pop)))  # avoiding negative probabilities, as fitness is ranges from negative numbers
         fit_pop_scaled = sigma_scaling(fit_pop)
         # Calculate the probabilities of each individual being selected
@@ -521,7 +541,7 @@ def train(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_
             file_aux.write('\ndoomsday')
             file_aux.close()
 
-            pop, fit_pop = doomsday(pop, fit_pop, cfg)
+            pop, fit_pop = doomsday(pop, fit_pop, info_pop, cfg)
             doomsday_counter = 0
 
         best = int(np.argmax(fit_pop))
@@ -535,6 +555,23 @@ def train(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_
         file_aux.write(
             '\n' + str(i) + ' ' + str(round(fit_pop[best], 6)) + ' ' + str(round(mean, 6)) + ' ' + str(round(std, 6)))
         file_aux.close()
+
+        wandb.log({'Fitness/Best': fit_pop[best], 
+                   'Fitness/Mean': mean, 
+                   'Fitness/Std': std, 
+                   'PlayerHealth/Best': info_pop[best][0], 
+                   'PlayerHealth/Mean': np.mean(info_pop[:, 0]),
+                   'PlayerHealth/Std': np.std(info_pop[:, 0]),
+                   'EnemyHealth/Best': info_pop[best][1], 
+                   'EnemyHealth/Mean': np.mean(info_pop[:, 1]),
+                   'EnemyHealth/Std': np.std(info_pop[:, 1]),
+                   'Timesteps/Best': info_pop[best][2],
+                   'Timesteps/Mean': np.mean(info_pop[:, 2]),
+                   'Timesteps/Std': np.std(info_pop[:, 2]),
+                   'Gain/Best': info_pop[best][0] - info_pop[best][1],
+                   'Gain/Mean': np.mean(info_pop[:, 0] - info_pop[:, 1]),
+                   'Gain/Std': np.std(info_pop[:, 0] - info_pop[:, 1])
+                   }, step = i)
 
         # saves generation number
         file_aux = open(experiment_name + '/gen.txt', 'w')
@@ -554,6 +591,19 @@ def train(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_
     fim = time.time()  # prints total execution time for experiment
     print('\nExecution time: ' + str(round((fim - ini) / 60)) + ' minutes \n')
     print('\nExecution time: ' + str(round((fim - ini))) + ' seconds \n')
+
+    best = int(np.argmax(fit_pop))  # best solution in generation
+    for i in range(5):
+        best_fit, best_info = evaluate([pop[best]])  # repeats best eval, for stability issues
+        try:
+            wandb.log({'Fitness5Times':best_fit[0], 
+                    'PlayerHealth5Times': best_info[0][0], 
+                    'EnemyHealth5Times': best_info[0][1], 
+                    'Timesteps5Times': best_info[0][2],
+                    'Gain5Times': best_info[0][0] - best_info[0][1],
+                    }, step = i)
+        except:
+            print(best_fit, best_info)
 
     file = open(experiment_name + '/neuroended', 'w')  # saves control (simulation has ended) file for bash loop file
     file.close()
@@ -576,7 +626,7 @@ def sigma_scaling(fit_pop, c=2):
     scaled_fitness = 1 + (fit_pop - mean) / (c * std)
 
     # Prevent negative fitness values
-    scaled_fitness = np.clip(scaled_fitness, 0, None)
+    scaled_fitness = np.clip(scaled_fitness, 0.0000000001, None)
 
     return scaled_fitness
 
@@ -611,7 +661,7 @@ def main(env: Environment, args: argparse.Namespace, cfg: dict) -> None:
     # initializes population loading old solutions or generating new ones
     if not os.path.exists(args.experiment_name + '/evoman_solstate') or args.new_evolution:
         print('\nNEW EVOLUTION\n')
-        pop, fit_pop, fit_pop_stats, ini_g = generate_new_pop(cfg['npop'], cfg['archetecture'])
+        pop, fit_pop, extra_info, fit_pop_stats, ini_g = generate_new_pop(cfg['npop'], cfg['archetecture'])
 
     else:
         print('\nCONTINUING EVOLUTION\n')
@@ -627,7 +677,7 @@ def main(env: Environment, args: argparse.Namespace, cfg: dict) -> None:
         '\n' + str(ini_g) + ' ' + str(round(fit_pop[best], 6)) + ' ' + str(round(mean, 6)) + ' ' + str(round(std, 6)))
     file_aux.close()
 
-    train(env, pop, fit_pop, best, ini_g, cfg)
+    train(env, pop, fit_pop, extra_info, best, ini_g, cfg)
 
 
 if __name__ == "__main__":  # Basically just checks if the script is being run directly or imported as a module
@@ -650,27 +700,39 @@ if __name__ == "__main__":  # Basically just checks if the script is being run d
     # choose this for not using visuals and thus making experiments faster
     headless = args.headless
     if headless:
-        os.environ["SDL_VIDEODRIVER"] = "dummy"  # Turn off videodriver when running headless
+        os.environ["SDL_VIDEODRIVER"] = "dummy"  # Turn off videodriver when running 
+    
+    for i in range(10):
+        # Initialize Weights and Biases
+        wandb.init(
+            # set the wandb project where this run will be logged
+            project="Evoman Project 1",
 
-    # Create a folder to store the experiment
-    experiment_name = args.experiment_name
-    if not os.path.exists(experiment_name):
-        os.makedirs(experiment_name)
+            # track hyperparameters and run metadata
+            name=args.experiment_name,
+            config=cfg
+        )
 
-    # initializes simulation in individual evolution mode, for single static enemy.
-    env = Environment(experiment_name=experiment_name,
-                      enemies=[8],
-                      playermode="ai",
-                      player_controller=player_controller(cfg['archetecture']),
-                      # Initialise player with specified archetecture
-                      enemymode="static",
-                      level=3,
-                      speed="fastest",
-                      visuals=False)
+        # Create a folder to store the experiment
+        experiment_name = args.experiment_name
+        if not os.path.exists(experiment_name):
+            os.makedirs(experiment_name)
 
-    env.state_to_log()  # checks environment state
+        # initializes simulation in individual evolution mode, for single static enemy.
+        env = Environment(experiment_name=experiment_name,
+                        enemies=[8],
+                        playermode="ai",
+                        player_controller=player_controller(cfg['archetecture']),
+                        # Initialise player with specified archetecture
+                        enemymode="static",
+                        level=3,
+                        speed="fastest",
+                        visuals=False)
 
-    # Optimization for controller solution (best genotype-weights for phenotype-network): Ganetic Algorihm    ###
-    ini = time.time()  # sets time marker
+        env.state_to_log()  # checks environment state
 
-    main(env, args, cfg)
+        # Optimization for controller solution (best genotype-weights for phenotype-network): Ganetic Algorihm    ###
+        ini = time.time()  # sets time marker
+
+        main(env, args, cfg)
+        wandb.finish()
