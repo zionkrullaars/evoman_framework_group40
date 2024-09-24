@@ -147,7 +147,7 @@ def standard_mutate(vals: np.ndarray, probability: float) -> np.ndarray:
 
     for i in range(0, len(vals)):
         if np.random.uniform(0, 1) <= probability:
-            vals[i] = vals[i] + np.random.normal(0, 1)
+            vals[i] = vals[i] + np.random.uniform(0, 1)
 
     return vals
 
