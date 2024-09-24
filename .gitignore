@@ -218,4 +218,4 @@ fabric.properties
 /Evoman_*
 /optimization_test/
 /wandb/
-./plots/*
+/plots/
