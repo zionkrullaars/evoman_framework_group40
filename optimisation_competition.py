@@ -9,7 +9,8 @@
 import sys
 
 from evoman.environment import Environment
-from wouters_test_controller import player_controller
+from nonunvslin_test_controller import player_controller
+from optimization_specialist_demo import sigma_scaling
 
 # imports other libs
 import time
@@ -433,6 +434,8 @@ def train(envs: list[Environment], pop: list[list[tuple[np.ndarray, np.ndarray]]
     print( '\nExecution time: '+str(round((fim-ini)/60))+' minutes \n')
     print( '\nExecution time: '+str(round((fim-ini)))+' seconds \n')
 
+    for i in range(5):
+
 
     file = open(experiment_name+'/neuroended', 'w')  # saves control (simulation has ended) file for bash loop file
     file.close()
@@ -450,15 +453,18 @@ def train_spec(env, pop, fit, other_pop, last_sol, spec_notimproved, comb_meth, 
     fit[best] = float(evaluate(env, [pop[best] ])[0][0]) # repeats best eval, for stability issues
     best_sol = fit[best]
 
+    
+
+    # selection
+    fit_pop_cp = fit_pop.copy()
+    
     if scale_type == 1:
         fit_pop = sigscaler(fit, c)
     else:
         fit_pop = fit.copy()
+        fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop))) # avoiding negative probabilities, as fitness is ranges from negative numbers
+        probs = (fit_pop_norm)/(fit_pop_norm).sum()
 
-    # selection
-    fit_pop_cp = fit_pop.copy()
-    fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop))) # avoiding negative probabilities, as fitness is ranges from negative numbers
-    probs = (fit_pop_norm)/(fit_pop_norm).sum()
     fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop))) # avoiding negative probabilities, as fitness is ranges from negative numbers
     probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
     # probs = softmax_activation(fit_pop)
