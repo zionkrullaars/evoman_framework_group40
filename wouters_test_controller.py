@@ -17,7 +17,7 @@ class player_controller(Controller):
 		# Number of hidden neurons
 			
 		# We must assure that the amount of layers we have weight and bias data for matches the amount of layers we want to create
-		assert len(layerconf) == len(self.n_hidden), "The amount of configurations for the hidden layers does not match the amount of hidden layers"
+		assert len(layerconf) == len(self.n_hidden), f"The amount of configurations for the hidden layers {layerconf} does not match the amount of hidden layers {self.n_hidden}"
 		
 		self.layers = []
 		in_size = n_inputs

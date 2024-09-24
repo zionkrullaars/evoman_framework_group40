@@ -679,6 +679,32 @@ def main(env: Environment, args: argparse.Namespace, cfg: dict) -> None:
 
     train(env, pop, fit_pop, extra_info, best, ini_g, cfg)
 
+def testbest(env: Environment, args: argparse.Namespace, cfg: dict) -> None:
+    """Test the best found solution 5 times and logs the results to wandb
+
+    Args:
+        env (Environment): Environment object for the evoman framework
+        args (argparse.Namespace): Command line arguments
+        cfg (dict): Configuration dictionary
+    """
+
+    # loads file with the best solution for testing
+    env.load_state()
+    pop = env.solutions[0]
+    fit_pop = env.solutions[1]
+
+    best = int(np.argmax(fit_pop))
+    bsol = pop[best]
+
+    print('\n RUNNING SAVED BEST SOLUTION \n')
+    for i in range(5):
+        fitness, other_info = evaluate([bsol])
+        wandb.log({'Fitness5Times':fitness[0],
+                     'PlayerHealth5Times': other_info[0][0],
+                     'EnemyHealth5Times': other_info[0][1],
+                     'Timesteps5Times': other_info[0][2],
+                     'Gain5Times': other_info[0][0] - other_info[0][1],
+                     })
 
 if __name__ == "__main__":  # Basically just checks if the script is being run directly or imported as a module
 
@@ -702,42 +728,55 @@ if __name__ == "__main__":  # Basically just checks if the script is being run d
     if headless:
         os.environ["SDL_VIDEODRIVER"] = "dummy"  # Turn off videodriver when running 
     
-    enemies = [6,7,8]
-    for enemy in enemies:
-        for i in range(10):
-            experiment_name = f'Evoman_Enemy{enemy}_StandMult{i}'
+    for muttype in ['standard', 'non_uniform']:
+        cfg['muttype'] = muttype
+        enemies = [6,7,8]
+        for enemy in enemies:
+            for i in range(10):
+                experiment_name = f'Evoman_Enemy{enemy}_NonUnMult{i}'
 
-            # Create a folder to store the experiment
-            if not os.path.exists(experiment_name):
-                os.makedirs(experiment_name)
+                # Create a folder to store the experiment
+                if not os.path.exists(experiment_name):
+                    os.makedirs(experiment_name)
 
-            # Initialize Weights and Biases
-            wandb.init(
-                # set the wandb project where this run will be logged
-                project="Evoman Project 1",
+                # Initialize Weights and Biases
+                wandb.init(
+                    # set the wandb project where this run will be logged
+                    project="Evoman Project 1",
 
-                # track hyperparameters and run metadata
-                name=experiment_name,
-                config=cfg
-            )
+                    # track hyperparameters and run metadata
+                    name=experiment_name,
+                    config=cfg
+                )
 
-            
+                
 
-            # initializes simulation in individual evolution mode, for single static enemy.
-            env = Environment(experiment_name=experiment_name,
-                            enemies=[8],
-                            playermode="ai",
-                            player_controller=player_controller(cfg['archetecture']),
-                            # Initialise player with specified archetecture
-                            enemymode="static",
-                            level=3,
-                            speed="fastest",
-                            visuals=False)
+                # initializes simulation in individual evolution mode, for single static enemy.
+                env = Environment(experiment_name=experiment_name,
+                                enemies=[8],
+                                playermode="ai",
+                                player_controller=player_controller(cfg['archetecture']),
+                                # Initialise player with specified archetecture
+                                enemymode="static",
+                                level=2,
+                                speed="fastest",
+                                visuals=False)
 
-            env.state_to_log()  # checks environment state
+                env.state_to_log()  # checks environment state
 
-            # Optimization for controller solution (best genotype-weights for phenotype-network): Ganetic Algorihm    ###
-            ini = time.time()  # sets time marker
+                # Optimization for controller solution (best genotype-weights for phenotype-network): Ganetic Algorihm    ###
+                ini = time.time()  # sets time marker
 
-            main(env, args, cfg)
-            wandb.finish()
+                main(env, args, cfg)
+                wandb.finish()
+                wandb.init(
+                    # set the wandb project where this run will be logged
+                    project="Evoman Project 1",
+
+                    # track hyperparameters and run metadata
+                    name=experiment_name+'_testBest',
+                    config=cfg
+                )
+                testbest(env, args, cfg)
+                wandb.finish()
+                
