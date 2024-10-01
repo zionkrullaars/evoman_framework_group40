@@ -84,16 +84,11 @@ def tournament(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarr
     """
 
     # Get two random values that correspond to two individuals in the population
-    c = np.random.randint(0, len(pop), size=size)
+    contestants = np.random.randint(0, len(pop), size=size)
 
     # Get the index of the fittest individual
-    maxIndex = c[np.argmax(fit_pop[c])]
-
-    # tdiff = 0
-    # for l1, l2 in zip(pop[c1], pop[c2]):
-    #     wdiff = np.sum(np.abs(l1[1] - l2[1]))
-    #     bdiff = np.sum(np.abs(l1[0] - l2[0]))
-    #     tdiff += (wdiff + bdiff)*0.01
+    # This is a bit dense, but it's likely faster than the original (this statement was not tested whatsoever).
+    maxIndex = contestants[np.argmax(fit_pop[contestants])]  # It just checks which fitness of the two contestants is the highest with argmax (giving 0 or 1), and then get's that one from the contestants array
 
     return pop[maxIndex]
 
@@ -144,26 +139,19 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
             child: list[tuple[np.ndarray, np.ndarray]] = []
 
             for layer_p1, layer_p2 in zip(p1, p2):
-                # crossover
-                weightsp = np.random.uniform(0,1)
-                biasp = np.random.uniform(0,1)
+                # crossover, we have different methods depending on the island
                 if method == 0:
                     weights, bias = snipcombine(layer_p1, layer_p2)
                 else:
                     weights, bias = blendcombine(layer_p1, layer_p2, cross_prop)
-
-                # weights = layer_p1[1]*cross_prop+layer_p2[1]*(1-cross_prop)
-                # bias = layer_p1[0]*cross_prop+layer_p2[0]*(1-cross_prop)
-                # weights = (layer_p1[1], layer_p2[1])[weightsp > cross_prop]
-                # bias = (layer_p1[0], layer_p2[0])[biasp > cross_prop]
 
                 # mutation
                 weights = mutate(weights, cfg['mutation'])
                 bias = mutate(bias, cfg['mutation'])
 
                 # limit between -1 and 1 using Tanh function
-                weights = tanh_activation(weights)
-                bias = tanh_activation(bias)
+                weights = np.clip(weights, cfg['dom_l'], cfg['dom_u'])
+                bias = np.clip(bias, cfg['dom_l'], cfg['dom_u'])
                 
                 child.append((weights , bias))
 
@@ -356,9 +344,7 @@ def train(envs: list[Environment], pop: list[list[tuple[np.ndarray, np.ndarray]]
         ini_g (int): Which generation to start at
         cfg (dict): Configuration dictionary
     """
-
-    fit_raw = fit_pop.copy()
-    
+ 
     no_improvement = 0
     last_best = fit_pop[best]
     c = 1.
@@ -367,73 +353,67 @@ def train(envs: list[Environment], pop: list[list[tuple[np.ndarray, np.ndarray]]
     species_pop, species_fit, species_other = make_species(pop, fit_pop, other_pop, cfg)
     last_sols = [0]*cfg['species']
     spec_notimproved = [0]*cfg['species']
+
+    # Just extra keeping track of the best solution, as not to lose this
     best_individuals = []
     for k in range(len(species_pop)):
         best_index = np.argmax(species_fit[k])
         best_individuals.append([species_pop[k][best_index], species_fit[k][best_index], species_other[k][best_index]])
 
+    # Main training loop
     for g in range(ini_g+1, cfg['gens']):
+        # Loop through all the islands and train them for one generation
         for i, popinfo in enumerate(zip(species_pop, species_fit, species_other)):
             pop, fit, other = popinfo
             species_pop[i], species_fit[i], species_other[i], last_sols[i], spec_notimproved[i], best_individuals[i], c = train_spec(envs[cur_env], pop, fit, other, last_sols[i], best_individuals[i], spec_notimproved[i], cfg['comb_meths'][i], cfg['scaletype'][i], c, cfg)
 
-        env = envs[cur_env]
-        # fit_raw = [f for fit in species_fit for f in fit]
-        pop = [ind for species in species_pop for ind in species]
-        fit_raw = np.array([])
-        for spec in species_fit:
-            fit_raw = np.append(fit_raw, spec)
-        # Make empty other_pop array of size (0, 5)
-        other_pop = np.empty((0, species_other[0].shape[1]))
+        # Make lists of the complete population to log the absolute best individual and other statistics
+        pop = []
+        fit = np.array([])
+        other_info = np.empty((0, species_other[0].shape[1]))
+        for spec_pop, spec_fit, spec_other in zip(species_pop, species_fit, species_other):
+            pop += spec_pop
+            fit = np.append(fit, spec_fit)
+            other_info = np.append(other_info, spec_other, axis=0)
 
-        for spec in species_other:
-            other_pop = np.append(other_pop, spec, axis=0)
-        # fit_raw, other_pop = evaluate(env, pop)
-        # other_pop = np.array([info for species in species_other for info in species])
-
-        best = int(np.argmax(fit_raw))
-        std  =  np.std(fit_raw)
-        mean = np.mean(fit_raw) 
-        c += min(2, 0.01)
-
-        if fit_raw[best] > 90:
-            cur_env += 1
-        cur_env = min(cur_env, len(envs)-1)
+        best = int(np.argmax(fit))
+        std  =  np.std(fit)
+        mean = np.mean(fit) 
+        # c += min(2, 0.01) # Was used to increase the c value of the sigma scaling, but it was not used in the end
 
         # saves results
-        file_aux  = open(experiment_name+'/results.txt','a')
-        print( '\n GENERATION '+str(g)+' '+str(round(fit_raw[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)))
-        wandb.log({'Generation': ini_g, 'Best Fitness': fit_raw[best], 'Mean Fitness': mean, 'Std Fitness': std, 'Best Player Health': other_pop[best][0], 'Best Enemy Health': other_pop[best][1], 'Best Timesteps': other_pop[best][2],'Gain': other_pop[best][3], 'Best Dead Enemies': other_pop[best][4], 'Current Env': cur_env})
-        file_aux.write('\n'+str(g)+' '+str(round(fit_raw[best],6))+' '+str(round(mean,6))+' '+str(round(std,6))   )
-        file_aux.close()
+        save_txt(experiment_name+'/results.txt', '\n'+str(g)+' '+str(round(fit[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
+        print( '\n GENERATION '+str(g)+' '+str(round(fit[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)))
+        wandb.log({'Generation': ini_g, 'Best Fitness': fit[best], 'Mean Fitness': mean, 'Std Fitness': std, 'Best Player Health': other_info[best][0], 'Best Enemy Health': other_info[best][1], 'Best Timesteps': other_info[best][2],'Gain': other_info[best][3], 'Best Dead Enemies': other_info[best][4], 'Current Env': cur_env})
 
         # saves generation number
-        file_aux  = open(experiment_name+'/gen.txt','w')
-        file_aux.write(str(i))
-        file_aux.close()
+        save_txt(experiment_name+'/gen.txt', str(i))
 
         # saves file with the best solution
-        file = gzip.open(experiment_name+'/best', 'wb', compresslevel = 5)
-        pickle.dump(best, file, protocol=2) # type: ignore
-        file.close()
+        save_weights(experiment_name, pop[best])
 
         # saves simulation state
-        solutions = [pop, fit_raw]
+        solutions = [pop, fit]
+        env = envs[cur_env]
         env.update_solutions(solutions)
         env.save_state()
 
         species_pop, species_fit, species_other = cross_species(species_pop, species_fit, species_other, cfg)
-        cur_best = fit_raw[best]
+        cur_best = fit[best]
         if cur_best <= last_best:
             no_improvement += 1
         else:
             last_best = cur_best
             no_improvement = 0
         
-        if no_improvement >= 450:
+        # Go to the next environment with more enemies if no improvement or high fitness
+        if fit[best] > 90:
+            cur_env += 1     
+        elif no_improvement >= 450:
             cur_env += 1
-            cur_env = min(cur_env, len(envs)-1)
             no_improvement = 0
+
+        cur_env = min(cur_env, len(envs)-1)
 
     fim = time.time() # prints total execution time for experiment
     print( '\nExecution time: '+str(round((fim-ini)/60))+' minutes \n')
@@ -447,6 +427,8 @@ def train(envs: list[Environment], pop: list[list[tuple[np.ndarray, np.ndarray]]
 def train_spec(env, pop, fit, other_pop, last_sol, best_individual, spec_notimproved, comb_meth, scale_type, c, cfg):
     offspring = crossover(pop, fit, comb_meth, cfg)  # crossover
     fit_offspring, other_info = evaluate(env, offspring)   # evaluation
+    
+    # Add offspring to the population
     pop = pop + offspring
     fit = np.append(fit,fit_offspring)
     other = np.append(other_pop, other_info, axis=0)
@@ -462,32 +444,35 @@ def train_spec(env, pop, fit, other_pop, last_sol, best_individual, spec_notimpr
         fit_pop_norm = sigma_scaling(fit_pop_cp, 2)
     else:
         fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop_cp))) # avoiding negative probabilities, as fitness is ranges from negative numbers
-        # probs = (fit_pop_norm)/(fit_pop_norm).sum()
 
-    # fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop))) # avoiding negative probabilities, as fitness is ranges from negative numbers
     probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
-    # probs = softmax_activation(fit_pop)
+    # probs = softmax_activation(fit_pop) # other way of normalizing fitness values to probabilities
     chosen = np.random.choice(len(pop), cfg['npop'] // cfg['species'] , p=probs, replace=False)
     chosen = np.append(chosen[1:],best)
 
     newpop: list[list[tuple[np.ndarray, np.ndarray]]] = []
     newfit = []
-    newraw = []
     newinfo = []
     for c in chosen:
         newpop.append(pop[c])
         newinfo.append(other[c])
-        newraw.append(fit[c])
-        # newfit.append(fit_pop[c])
+        newfit.append(fit[c])
+
     pop = newpop
-    # fit_pop = np.array(newfit)
-    fit = np.array(newraw)
+    fit = np.array(newfit)
     other = np.array(newinfo)
 
     # searching new areas
+
+    # Update so that the fitness of the stored best individual is still correct in the current environment
     best_individual[1], best_individual[2] = evaluate(env, [best_individual[0]])
     if best_sol <= best_individual[1]:
         spec_notimproved += 1
+
+        # Replace one in population with the best stored individual for this island
+        pop[0] = best_individual[0]
+        fit[0] = best_individual[1]
+        other[0] = best_individual[2]
     else:
         last_sol = best_sol
         best = int(np.argmax(fit))
@@ -495,21 +480,14 @@ def train_spec(env, pop, fit, other_pop, last_sol, best_individual, spec_notimpr
         spec_notimproved = 0
 
     if spec_notimproved >= cfg['doomsteps']:
-        file_aux  = open(experiment_name+'/results.txt','a')
-        file_aux.write('\ndoomsday')
-        file_aux.close()
+        save_txt(experiment_name+'/results.txt', '\ndoomsday', 'a')
         assert other.shape[0] == fit.shape[0]
         pop, fit, other = doomsday(env, pop,fit, other, cfg)
-        # fit_raw, other_pop = evaluate(pop)
-        # fit_pop = sigscaler(fit.copy(), c)
         spec_notimproved = 0
             
-    # Replace one in population with the best individual
-    pop[0] = best_individual[0]
-    fit[0] = best_individual[1]
-    other[0] = best_individual[2]
     return pop, fit, other, last_sol, spec_notimproved, best_individual, c
 
+#### UTILS ####
 def print_dict(d: dict) -> None:
     """Print a dictionary
 
@@ -518,6 +496,16 @@ def print_dict(d: dict) -> None:
     """
     for k, v in d.items():
         print(f'{k}: {v}')
+
+def save_weights(name: str, individual: tuple[np.ndarray, np.ndarray]) -> None:
+    file = gzip.open(name+'/best', 'wb', compresslevel = 5)
+    pickle.dump(individual, file, protocol=2) # type: ignore
+    file.close()
+
+def save_txt(name: str, text: str, savetype: str = 'w') -> None:
+    file_aux  = open(name,savetype)
+    file_aux.write(text)
+    file_aux.close()
 
 def main(envs: list[Environment], args: argparse.Namespace, cfg: dict) -> None:
     """Main function for the genetic algorithm
@@ -548,11 +536,8 @@ def main(envs: list[Environment], args: argparse.Namespace, cfg: dict) -> None:
 
     # saves results for first pop
     best, mean, std = fit_pop_stats
-    file_aux  = open(experiment_name+'/results.txt','a')
-    file_aux.write('\n\ngen best mean std')
+    save_txt(experiment_name+'/results.txt', '\n\ngen best mean std' + '\n'+str(ini_g)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
     print( '\n GENERATION '+str(ini_g)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)))
-    file_aux.write('\n'+str(ini_g)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6))   )
-    file_aux.close()
 
     train(envs, pop, fit_pop, other_info, best, ini_g, cfg)
 
