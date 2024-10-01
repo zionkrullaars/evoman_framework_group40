@@ -78,8 +78,8 @@ np.random.seed(420)
 
 # runs simulation
 def simulation(env,x):
-    f,p,e,t = env.play(pcont=x)
-    return f, (p,e,t)
+    f,p,e,t,de,g = env.play(pcont=x)
+    return f, (p,e,t,g,de)
 
 # normalizes
 def norm(x,pfit_pop):
@@ -288,7 +288,7 @@ for i in range(ini_g+1, gens):
     file_aux  = open(experiment_name+'/results.txt','a')
     print( '\n GENERATION '+str(i)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)))
     # wandb.log({'generation': i, 'best': fit_pop[best], 'mean': mean, 'std': std})
-    wandb.log({'Generation': ini_g, 'Best Fitness': fit_pop[best], 'Mean Fitness': mean, 'Std Fitness': std, 'Best Player Health': fit_info[best][0], 'Best Enemy Health': fit_info[best][1], 'Best Timesteps': fit_info[best][2],'Gain': fit_info[best][0] - fit_info[best][1]})
+    wandb.log({'Generation': ini_g, 'Best Fitness': fit_pop[best], 'Mean Fitness': mean, 'Std Fitness': std, 'Best Player Health': fit_info[best][0], 'Best Enemy Health': fit_info[best][1], 'Best Timesteps': fit_info[best][2],'Gain': fit_info[best][3], 'Dead_Enemies': fit_info[best][4]})
     file_aux.write('\n'+str(i)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6))   )
     file_aux.close()
 
