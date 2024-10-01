@@ -36,10 +36,9 @@ def sigscaler(x: np.ndarray, c: float) -> np.ndarray:
 
 # runs simulation
 def simulation(env,x):
-    f,p,e,t = env.play(pcont=x)
-    g = p - e
+    f,p,e,t,de,g = env.play(pcont=x)
     # Count all zero values in the array e
-    de = np.count_nonzero(e == 0)
+    # de = np.count_nonzero(e == 0)
     return f, p, e, t, g, de
 
 # normalizes

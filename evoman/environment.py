@@ -605,11 +605,13 @@ class Environment(object):
             vtime.append(time)
 
         vfitness = self.cons_multi(numpy.array(vfitness))
-        vplayerlife = self.cons_multi(numpy.array(vplayerlife))
-        venemylife = self.cons_multi(numpy.array(venemylife))
+        vplayerlifeFinal = self.cons_multi(numpy.array(vplayerlife))
+        venemylifeFinal = self.cons_multi(numpy.array(venemylife))
         vtime = self.cons_multi(numpy.array(vtime))
+        vdeadEnemies = numpy.count_nonzero(numpy.array(venemylife) == 0)
+        gainRaw = numpy.array(vplayerlife).sum() - numpy.array(venemylife).sum()
 
-        return    vfitness, vplayerlife, venemylife, vtime
+        return vfitness, vplayerlifeFinal, venemylifeFinal, vtime, vdeadEnemies, gainRaw
 
 
     # checks objective mode
