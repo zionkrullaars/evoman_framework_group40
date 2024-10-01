@@ -407,10 +407,14 @@ def train(envs: list[Environment], pop: list[list[tuple[np.ndarray, np.ndarray]]
             no_improvement = 0
         
         # Go to the next environment with more enemies if no improvement or high fitness
-        if fit[best] > 90:
-            cur_env += 1     
-        elif no_improvement >= 450:
+        if fit[best] > 90 or no_improvement >= 450:
             cur_env += 1
+            # Re-evaluate the population in the new environment
+            for j, p in enumerate(species_pop):
+                pfit, pother = evaluate(envs[cur_env], p)
+                species_fit[j] = pfit
+                species_other[j] = pother
+
             no_improvement = 0
 
         cur_env = min(cur_env, len(envs)-1)
@@ -431,6 +435,7 @@ def train_spec(env, pop, fit, other_pop, last_sol, best_individual, spec_notimpr
     # Add offspring to the population
     pop = pop + offspring
     fit = np.append(fit,fit_offspring)
+    fitforcheck = np.max(fit)
     other = np.append(other_pop, other_info, axis=0)
     
     best = int(np.argmax(fit)) #best solution in generation
@@ -461,6 +466,7 @@ def train_spec(env, pop, fit, other_pop, last_sol, best_individual, spec_notimpr
     pop = newpop
     fit = np.array(newfit)
     other = np.array(newinfo)
+    assert best_sol in fit, f"Best individual {best_individual[1]} not in population 1 {best_sol}"
 
     # searching new areas
 
@@ -469,10 +475,6 @@ def train_spec(env, pop, fit, other_pop, last_sol, best_individual, spec_notimpr
     if best_sol <= best_individual[1]:
         spec_notimproved += 1
 
-        # Replace one in population with the best stored individual for this island
-        pop[0] = best_individual[0]
-        fit[0] = best_individual[1]
-        other[0] = best_individual[2]
     else:
         last_sol = best_sol
         best = int(np.argmax(fit))
@@ -484,6 +486,17 @@ def train_spec(env, pop, fit, other_pop, last_sol, best_individual, spec_notimpr
         assert other.shape[0] == fit.shape[0]
         pop, fit, other = doomsday(env, pop,fit, other, cfg)
         spec_notimproved = 0
+
+    assert best_sol in fit, f"Best individual {best_individual[1]} not in population 2"
+
+    # Replace one in population with the best stored individual for this island
+    if best_individual[1] > np.max(fit):
+        replace_index = np.argmin(fit)
+        pop[replace_index] = best_individual[0]
+        fit[replace_index] = best_individual[1]
+        other[replace_index] = best_individual[2]
+
+    assert best_sol in fit, f"Best individual {best_individual[1]} not in population 3"
             
     return pop, fit, other, last_sol, spec_notimproved, best_individual, c
 
