@@ -33,7 +33,7 @@ class player_controller(Controller):
 
 		# Preparing the weights and biases from the controller of layer 1
 		for layer in self.layers[:-1]:
-			output = leakyrelu_activation(layer.forward(inputs))
+			output = sigmoid_activation(layer.forward(inputs))
 			inputs = output
 		
 		output = sigmoid_activation(self.layers[-1].forward(inputs))[0]

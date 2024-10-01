@@ -9,8 +9,8 @@
 import sys
 
 from evoman.environment import Environment
-from nonunvslin_test_controller import player_controller
-from optimization_specialist_demo import sigma_scaling
+from assignment1_test_controller import player_controller
+from optimization_specialist_assignment1 import sigma_scaling
 
 # imports other libs
 import time
@@ -36,7 +36,10 @@ def sigscaler(x: np.ndarray, c: float) -> np.ndarray:
 
 # runs simulation
 def simulation(env,x):
-    f,p,e,t,g,de = env.play(pcont=x)
+    f,p,e,t = env.play(pcont=x)
+    g = p - e
+    # Count all zero values in the array e
+    de = np.count_nonzero(e == 0)
     return f, p, e, t, g, de
 
 # normalizes
@@ -111,7 +114,6 @@ def mutate(vals: np.ndarray, probability: float) -> np.ndarray:
     vals[mutation_mask] += np.random.normal(0, 1, size=vals[mutation_mask].shape)
 
     return vals
-
 
 
 # crossover
@@ -362,16 +364,19 @@ def train(envs: list[Environment], pop: list[list[tuple[np.ndarray, np.ndarray]]
     last_best = fit_pop[best]
     c = 1.
     cur_env = 0
-    print(len(envs))
 
     species_pop, species_fit, species_other = make_species(pop, fit_pop, other_pop, cfg)
     last_sols = [0]*cfg['species']
     spec_notimproved = [0]*cfg['species']
+    best_individuals = []
+    for k in range(len(species_pop)):
+        best_index = np.argmax(species_fit[k])
+        best_individuals.append([species_pop[k][best_index], species_fit[k][best_index], species_other[k][best_index]])
 
     for g in range(ini_g+1, cfg['gens']):
         for i, popinfo in enumerate(zip(species_pop, species_fit, species_other)):
             pop, fit, other = popinfo
-            species_pop[i], species_fit[i], species_other[i], last_sols[i], spec_notimproved[i], c = train_spec(envs[cur_env], pop, fit, other, last_sols[i], spec_notimproved[i], cfg['comb_meths'][i], cfg['scaletype'][i], c, cfg)
+            species_pop[i], species_fit[i], species_other[i], last_sols[i], spec_notimproved[i], best_individuals[i], c = train_spec(envs[cur_env], pop, fit, other, last_sols[i], best_individuals[i], spec_notimproved[i], cfg['comb_meths'][i], cfg['scaletype'][i], c, cfg)
 
         env = envs[cur_env]
         # fit_raw = [f for fit in species_fit for f in fit]
@@ -429,20 +434,18 @@ def train(envs: list[Environment], pop: list[list[tuple[np.ndarray, np.ndarray]]
         if no_improvement >= 250:
             cur_env += 1
             cur_env = min(cur_env, len(envs)-1)
+            no_improvement = 0
 
     fim = time.time() # prints total execution time for experiment
     print( '\nExecution time: '+str(round((fim-ini)/60))+' minutes \n')
     print( '\nExecution time: '+str(round((fim-ini)))+' seconds \n')
-
-    for i in range(5):
-
 
     file = open(experiment_name+'/neuroended', 'w')  # saves control (simulation has ended) file for bash loop file
     file.close()
 
     env.state_to_log() 
 
-def train_spec(env, pop, fit, other_pop, last_sol, spec_notimproved, comb_meth, scale_type, c, cfg):
+def train_spec(env, pop, fit, other_pop, last_sol, best_individual, spec_notimproved, comb_meth, scale_type, c, cfg):
     offspring = crossover(pop, fit, comb_meth, cfg)  # crossover
     fit_offspring, other_info = evaluate(env, offspring)   # evaluation
     pop = pop + offspring
@@ -453,19 +456,16 @@ def train_spec(env, pop, fit, other_pop, last_sol, spec_notimproved, comb_meth, 
     fit[best] = float(evaluate(env, [pop[best] ])[0][0]) # repeats best eval, for stability issues
     best_sol = fit[best]
 
-    
-
     # selection
-    fit_pop_cp = fit_pop.copy()
+    fit_pop_cp = fit.copy()
     
     if scale_type == 1:
-        fit_pop = sigscaler(fit, c)
+        fit_pop_norm = sigma_scaling(fit_pop_cp, 2)
     else:
-        fit_pop = fit.copy()
-        fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop))) # avoiding negative probabilities, as fitness is ranges from negative numbers
-        probs = (fit_pop_norm)/(fit_pop_norm).sum()
+        fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop_cp))) # avoiding negative probabilities, as fitness is ranges from negative numbers
+        # probs = (fit_pop_norm)/(fit_pop_norm).sum()
 
-    fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop))) # avoiding negative probabilities, as fitness is ranges from negative numbers
+    # fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop))) # avoiding negative probabilities, as fitness is ranges from negative numbers
     probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
     # probs = softmax_activation(fit_pop)
     chosen = np.random.choice(len(pop), cfg['npop'] // cfg['species'] , p=probs, replace=False)
@@ -479,17 +479,20 @@ def train_spec(env, pop, fit, other_pop, last_sol, spec_notimproved, comb_meth, 
         newpop.append(pop[c])
         newinfo.append(other[c])
         newraw.append(fit[c])
-        newfit.append(fit_pop[c])
+        # newfit.append(fit_pop[c])
     pop = newpop
-    fit_pop = np.array(newfit)
+    # fit_pop = np.array(newfit)
     fit = np.array(newraw)
     other = np.array(newinfo)
 
     # searching new areas
-    if best_sol <= last_sol:
+    best_individual[1], best_individual[2] = evaluate(env, [best_individual[0]])
+    if best_sol <= best_individual[1]:
         spec_notimproved += 1
     else:
         last_sol = best_sol
+        best = int(np.argmax(fit))
+        best_individual = [pop[best], fit[best], other[best]]
         spec_notimproved = 0
 
     if spec_notimproved >= cfg['doomsteps']:
@@ -502,10 +505,11 @@ def train_spec(env, pop, fit, other_pop, last_sol, spec_notimproved, comb_meth, 
         # fit_pop = sigscaler(fit.copy(), c)
         spec_notimproved = 0
             
-    # species_fit[i] = fit
-    # species_other[i] = other
-    # species_pop[i] = pop
-    return pop, fit, other, last_sol, spec_notimproved, c
+    # Replace one in population with the best individual
+    pop[0] = best_individual[0]
+    fit[0] = best_individual[1]
+    other[0] = best_individual[2]
+    return pop, fit, other, last_sol, spec_notimproved, best_individual, c
 
 def print_dict(d: dict) -> None:
     """Print a dictionary
@@ -594,7 +598,7 @@ if __name__ == "__main__": # Basically just checks if the script is being run di
     # initializes simulation in individual evolution mode, for single static enemy.
     envs = []
     enemies = [[8],[7,8],[6,7,8],[5,6,7,8],[4,5,6,7,8],[3,4,5,6,7,8],[2,3,4,5,6,7,8],[1,2,3,4,5,6,7,8]]
-    for i in range(cfg['species']):
+    for i in range(len(enemies)):
         if not os.path.exists(experiment_name+f'{i}'):
             os.makedirs(experiment_name+f'{i}')
         env = Environment(experiment_name=experiment_name+f'{i}',

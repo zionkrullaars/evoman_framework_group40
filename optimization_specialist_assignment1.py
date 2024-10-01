@@ -9,7 +9,7 @@
 import sys
 
 from evoman.environment import Environment
-from nonunvslin_test_controller import player_controller
+from assignment1_test_controller import player_controller
 
 # imports other libs
 import time
@@ -53,7 +53,6 @@ def evaluate(x: list[list[tuple[np.ndarray, np.ndarray]]]) -> tuple[np.ndarray, 
     Returns:
         np.ndarray: List of fitness values for each individual in the population of size (pop_size*1)
     """
-    # fitness, extra_info = list(map(lambda y: simulation(env, y), x))
     fitness, extra_info = zip(*list(map(lambda y: simulation(env, y), x)))
     return np.array(fitness), np.array(extra_info)
 

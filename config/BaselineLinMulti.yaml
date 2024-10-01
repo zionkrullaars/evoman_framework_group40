@@ -9,6 +9,6 @@ mutation: 0.1                     # Mutation rate
 species: 5                        # Number of species
 spec_cross: 0.1                  # Species crossover rate
 comb_meths: [0,1,0,1,0]           # Combination methods
-scaletype: [1,1,0,0,1]            # Scaling type
+scaletype: [1,1,1,1,1]            # Scaling type
 doomsteps: 15                     # Number of doomsteps
 last_best: 0                      # Last best value

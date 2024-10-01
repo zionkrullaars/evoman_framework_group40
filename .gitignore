@@ -219,3 +219,5 @@ fabric.properties
 /optimization_test/
 /wandb/
 /plots/
+/BaseLin*
+/multi_demo/

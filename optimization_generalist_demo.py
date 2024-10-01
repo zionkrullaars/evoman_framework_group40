@@ -16,6 +16,7 @@ import time
 import numpy as np
 from math import fabs,sqrt
 import glob, os
+import wandb
 
 # choose this for not using visuals and thus making experiments faster
 headless = True
@@ -30,7 +31,7 @@ if not os.path.exists(experiment_name):
 
 # initializes simulation in multi evolution mode, for multiple static enemies.
 env = Environment(experiment_name=experiment_name,
-                  enemies=[7,8],
+                  enemies=[1,2,3,4,5,6,7,8],
                   multiplemode="yes",
                   playermode="ai",
                   player_controller=player_controller(n_hidden_neurons),
@@ -38,6 +39,14 @@ env = Environment(experiment_name=experiment_name,
                   level=2,
                   speed="fastest",
                   visuals=False)
+
+wandb.init(
+        # set the wandb project where this run will be logged
+        project="Evoman Competition",
+
+        # track hyperparameters and run metadata
+        name='Standard Generalist',
+    )
 
 # default environment fitness is assumed for experiment
 
@@ -59,7 +68,7 @@ n_vars = (env.get_num_sensors()+1)*n_hidden_neurons + (n_hidden_neurons+1)*5
 dom_u = 1
 dom_l = -1
 npop = 100
-gens = 30
+gens = 500
 mutation = 0.2
 last_best = 0
 
@@ -70,7 +79,7 @@ np.random.seed(420)
 # runs simulation
 def simulation(env,x):
     f,p,e,t = env.play(pcont=x)
-    return f
+    return f, (p,e,t)
 
 # normalizes
 def norm(x,pfit_pop):
@@ -86,8 +95,17 @@ def norm(x,pfit_pop):
 
 
 # evaluation
-def evaluate(x):
-    return np.array(list(map(lambda y: simulation(env,y), x)))
+def evaluate(x: list[list[tuple[np.ndarray, np.ndarray]]]) -> tuple[np.ndarray, np.ndarray]:
+    """Evaluate the fitness of a population of individuals
+
+    Args:
+        x (list[list[tuple[np.ndarray, np.ndarray]]]): Population of individuals, each individual is a list of tuples containing weights and biases for each layer
+
+    Returns:
+        np.ndarray: List of fitness values for each individual in the population of size (pop_size*1)
+    """
+    fitness, extra_info = zip(*list(map(lambda y: simulation(env, y), x)))
+    return np.array(fitness), np.array(extra_info)
 
 
 # tournament
@@ -143,7 +161,7 @@ def crossover(pop):
 
 
 # kills the worst genomes, and replace with new best/random solutions
-def doomsday(pop,fit_pop):
+def doomsday(pop,fit_pop, fit_info):
 
     worst = int(npop/4)  # a quarter of the population
     order = np.argsort(fit_pop)
@@ -157,9 +175,9 @@ def doomsday(pop,fit_pop):
             else:
                 pop[o][j] = pop[order[-1:]][0][j] # dna from best
 
-        fit_pop[o]=evaluate([pop[o]])
+        fit_pop[o], fit_info[o] =evaluate([pop[o]])
 
-    return pop,fit_pop
+    return pop,fit_pop, fit_info
 
 
 
@@ -181,7 +199,7 @@ if not os.path.exists(experiment_name+'/evoman_solstate'):
     print( '\nNEW EVOLUTION\n')
 
     pop = np.random.uniform(dom_l, dom_u, (npop, n_vars))
-    fit_pop = evaluate(pop)
+    fit_pop, fit_info = evaluate(pop)
     best = np.argmax(fit_pop)
     mean = np.mean(fit_pop)
     std = np.std(fit_pop)
@@ -225,12 +243,13 @@ notimproved = 0
 for i in range(ini_g+1, gens):
 
     offspring = crossover(pop)  # crossover
-    fit_offspring = evaluate(offspring)   # evaluation
+    fit_offspring, info_offspring = evaluate(offspring)   # evaluation
     pop = np.vstack((pop,offspring))
     fit_pop = np.append(fit_pop,fit_offspring)
+    fit_info = np.append(fit_info,info_offspring, axis = 0)
 
     best = np.argmax(fit_pop) #best solution in generation
-    fit_pop[best] = float(evaluate(np.array([pop[best] ]))[0]) # repeats best eval, for stability issues
+    fit_pop[best] = float(evaluate([pop[best] ])[0][0])
     best_sol = fit_pop[best]
 
     # selection
@@ -257,7 +276,7 @@ for i in range(ini_g+1, gens):
         file_aux.write('\ndoomsday')
         file_aux.close()
 
-        pop, fit_pop = doomsday(pop,fit_pop)
+        pop, fit_pop, fit_info = doomsday(pop,fit_pop,fit_info)
         notimproved = 0
 
     best = np.argmax(fit_pop)
@@ -268,6 +287,8 @@ for i in range(ini_g+1, gens):
     # saves results
     file_aux  = open(experiment_name+'/results.txt','a')
     print( '\n GENERATION '+str(i)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)))
+    # wandb.log({'generation': i, 'best': fit_pop[best], 'mean': mean, 'std': std})
+    wandb.log({'Generation': ini_g, 'Best Fitness': fit_pop[best], 'Mean Fitness': mean, 'Std Fitness': std, 'Best Player Health': fit_info[best][0], 'Best Enemy Health': fit_info[best][1], 'Best Timesteps': fit_info[best][2],'Gain': fit_info[best][0] - fit_info[best][1]})
     file_aux.write('\n'+str(i)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6))   )
     file_aux.close()
 

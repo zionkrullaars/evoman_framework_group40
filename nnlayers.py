@@ -7,6 +7,12 @@ def sigmoid_activation(x: np.ndarray):
 def leakyrelu_activation(x: np.ndarray):
 	return np.maximum(0, x) + np.minimum(0, 0.01*x)
 
+def tanh_activation(x: np.ndarray):
+    return np.tanh(x)
+
+def softmax_activation(x: np.ndarray):
+    return np.exp(x) / np.sum(np.exp(x), axis=0)
+
 def normalise(x: np.ndarray):
     return (x-np.min(x))/float((np.max(x)-np.min(x)))
 
