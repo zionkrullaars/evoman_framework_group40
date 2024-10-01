@@ -430,7 +430,7 @@ def train(envs: list[Environment], pop: list[list[tuple[np.ndarray, np.ndarray]]
             last_best = cur_best
             no_improvement = 0
         
-        if no_improvement >= 250:
+        if no_improvement >= 450:
             cur_env += 1
             cur_env = min(cur_env, len(envs)-1)
             no_improvement = 0

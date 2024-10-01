@@ -620,4 +620,5 @@ class Environment(object):
         if self.multiplemode == "yes":
             return self.multiple(pcont,econt)
         else:
-            return self.run_single(self.enemies[0],pcont,econt)
+            f, p, e, t = self.run_single(self.enemies[0],pcont,econt)
+            return f, p, e, t, e==0, p-e
