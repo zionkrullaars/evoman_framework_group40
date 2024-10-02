@@ -21,76 +21,255 @@ import glob, os
 import gzip, pickle, yaml
 import argparse
 import wandb
+import statistics
 from nnlayers import tanh_activation, sigmoid_activation, softmax_activation
+from functools import total_ordering, reduce
+from operator import add
+
+VERBOSE = False
+
+def verbose_print(*args, **kwargs):
+    if VERBOSE:
+        print(*args, **kwargs)
 
 np.random.seed(42)
 random.seed(42)
 
-def exponential_ranking(x: np.ndarray, c: float) -> np.ndarray:
-    return np.exp(c * x) / np.exp(c * x).sum()
+@total_ordering
+class Individual:
 
-def sigscaler(x: np.ndarray, c: float) -> np.ndarray:
-    x = x - (x.mean() - c * x.std())
-    return x.clip(min=0.000000001)
+    def __init__(self, 
+                 fitness: float = 0, 
+                 player_energy: float = 0, 
+                 enemy_energy: float = 0, 
+                 timesteps: int = 0, 
+                 gain: float = 0, 
+                 dead_enemies: int = 0):
+        
+        self.wnb: list[tuple[np.ndarray, np.ndarray]] = []
+        self.fitness = fitness
+        self.player_energy = player_energy
+        self.enemy_energy = enemy_energy
+        self.timesteps = timesteps
+        self.gain = gain
+        self.dead_enemies = dead_enemies
+
+    def intialiseWeights(self, n_hidden_neurons: list[int]) -> None:
+        """
+        Initializes the weights and biases for a neural network with the given hidden layer sizes.
+        Args:
+            n_hidden_neurons (list[int]): A list containing the number of neurons in each hidden layer.
+        """
+
+        self.wnb : list[tuple[np.ndarray, np.ndarray]] = []
+        in_size = 20 # Amount of input neurons (sensors of the game)
+        for layer_size in n_hidden_neurons:
+            weights = np.random.uniform(-1,1,(in_size, layer_size))
+            bias = np.random.uniform(-1,1,(1, layer_size))
+            in_size = layer_size
+            self.wnb.append((weights, bias))
+
+    def setWeights(self, wnb: list[tuple[np.ndarray, np.ndarray]]) -> None:
+        """ Set the weights and biases of the individual
+        Args:
+            wnb (list[tuple[np.ndarray, np.ndarray]]): List of tuples containing the weights and biases for each layer
+        """
+        self.wnb = wnb
+
+    def evaluate(self, env: Environment) -> None:
+        """Evaluate the individual in the given environment
+
+        Args:
+            env (Environment): Environment object for the evoman framework
+        """        
+        f, p, e, t, de, g = env.play(pcont=self.wnb)
+        self.fitness = f
+        self.player_energy = p
+        self.enemy_energy = e
+        self.timesteps = t
+        self.gain = g
+        self.dead_enemies = de
+
+    # Bunch of magic methods to make the Individual class work with the genetic algorithm (if you want to find out more, google function overloading)
+    def __str__(self) -> str:
+        return f"Individual: {self.fitness}"
+
+    def __repr__(self) -> float:
+        return self.fitness
     
-
-# runs simulation
-def simulation(env,x):
-    f,p,e,t,de,g = env.play(pcont=x)
-    # Count all zero values in the array e
-    # de = np.count_nonzero(e == 0)
-    return f, p, e, t, g, de
-
-# normalizes
-def norm(x, pfit_pop):
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Individual):
+            return False
+        return self.fitness == other.fitness
     
-    if ( max(pfit_pop) - min(pfit_pop) ) > 0:
-        x_norm = ( x - min(pfit_pop) )/( max(pfit_pop) - min(pfit_pop) )
-    else:
-        x_norm = 0
-
-    if x_norm <= 0:
-        x_norm = 0.0000000001
-    return x_norm
-
-
-# evaluation
-def evaluate(env: Environment, x: list[list[tuple[np.ndarray, np.ndarray]]]) -> tuple[np.ndarray, np.ndarray]:
-    """Evaluate the fitness of a population of individuals
-
-    Args:
-        x (list[list[tuple[np.ndarray, np.ndarray]]]): Population of individuals, each individual is a list of tuples containing weights and biases for each layer
-
-    Returns:
-        np.ndarray: List of fitness values for each individual in the population of size (pop_size*1)
-        np.ndarray: Other information about the individuals in the population in shape (player_energy, enemy_energy, timesteps)
-    """
-    results = np.array([simulation(env, individual) for individual in x])
-    fitness = results[:, 0]
-    other_info = results[:, 1:]
-    return fitness, other_info
-
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+    
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, Individual):
+            return False
+        return self.fitness < other.fitness
+    
+    def __le__(self, other: object) -> bool:
+        return self.__lt__(other) or self.__eq__(other)
+    
+    def __gt__(self, other: object) -> bool:
+        if not isinstance(other, Individual):
+            return False
+        return self.fitness > other.fitness
+    
+    def __ge__(self, other: object) -> bool:
+        return self.__gt__(other) or self.__eq__(other)
+    
+    def __hash__(self) -> int:
+        return hash(self.fitness)
+    
+    def __add__(self, other: object) -> float:
+        if isinstance(other, Individual):
+            return self.fitness + other.fitness
+        elif isinstance(other, (int, float)):
+            return self.fitness + other
+        else:
+            return NotImplemented
+        
+    def __radd__(self, other: object) -> float:
+        if isinstance(other, Individual):
+            return other.fitness + self.fitness
+        elif isinstance(other, (int, float)):
+            return other + self.fitness
+        else:
+            return NotImplemented
+        
+    def __sub__(self, other: object) -> float:
+        if isinstance(other, Individual):
+            return self.fitness - other.fitness
+        elif isinstance(other, (int, float)):
+            return self.fitness - other
+        else:
+            return NotImplemented
+        
+    def __rsub__(self, other: object) -> float:
+        if isinstance(other, Individual):
+            return other.fitness - self.fitness
+        elif isinstance(other, (int, float)):
+            return other - self.fitness
+        else:
+            return NotImplemented
+        
+    def __mul__(self, other: object) -> float:
+        if isinstance(other, Individual):
+            return self.fitness * other.fitness
+        elif isinstance(other, (int, float)):
+            return self.fitness * other
+        else:
+            return NotImplemented
+        
+    def __rmul__(self, other: object) -> float:
+        if isinstance(other, Individual):
+            return other.fitness * self.fitness
+        elif isinstance(other, (int, float)):
+            return other * self.fitness
+        else:
+            return NotImplemented
+        
+    def __truediv__(self, other: object) -> float:
+        if isinstance(other, Individual):
+            return self.fitness / other.fitness
+        elif isinstance(other, (int, float)):
+            return self.fitness / other
+        else:
+            return NotImplemented
+        
+    def __rtruediv__(self, other: object) -> float:
+        if isinstance(other, Individual):
+            return other.fitness / self.fitness
+        elif isinstance(other, (int, float)):
+            return other / self.fitness
+        else:
+            return NotImplemented
+        
+    def __floordiv__(self, other: object) -> float:
+        if isinstance(other, Individual):
+            return self.fitness // other.fitness
+        elif isinstance(other, (int, float)):
+            return self.fitness // other
+        else:
+            return NotImplemented
+        
+    def __rfloordiv__(self, other: object) -> float:
+        if isinstance(other, Individual):
+            return other.fitness // self.fitness
+        elif isinstance(other, (int, float)):
+            return other // self.fitness
+        else:
+            return NotImplemented
+        
+    def __mod__(self, other: object) -> float:
+        if isinstance(other, Individual):
+            return self.fitness % other.fitness
+        elif isinstance(other, (int, float)):
+            return self.fitness % other
+        else:
+            return NotImplemented
+        
+    def __rmod__(self, other: object) -> float:
+        if isinstance(other, Individual):
+            return other.fitness % self.fitness
+        elif isinstance(other, (int, float)):
+            return other % self.fitness
+        else:
+            return NotImplemented
+        
+    def __pow__(self, other: object) -> float:
+        if isinstance(other, Individual):
+            return self.fitness ** other.fitness
+        elif isinstance(other, (int, float)):
+            return self.fitness ** other
+        else:
+            return NotImplemented
+        
+    def __rpow__(self, other: object) -> float:
+        if isinstance(other, Individual):
+            return other.fitness ** self.fitness
+        elif isinstance(other, (int, float)):
+            return other ** self.fitness
+        else:
+            return NotImplemented
+        
+    def __abs__(self) -> float:
+        return abs(self.fitness)
+    
+    def __neg__(self) -> float:
+        return -self.fitness
+    
+    def __pos__(self) -> float:
+        return +self.fitness
+    
+    def __round__(self, n: int = 0) -> float:
+        return round(self.fitness, n)
+    
+    def __float__(self) -> float:
+        return float(self.fitness)
+    
+    def __int__(self) -> int:
+        return int(self.fitness)
 
 # tournament
-def tournament(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, size: int) -> list[tuple[np.ndarray, np.ndarray]]:
+def tournament(pop: list[Individual], size: int = 2) -> Individual:
     """Tournament function to select the fittest of two individuals in the population
 
     Args:
-        pop (list[list[tuple[np.ndarray, np.ndarray]]]): Population of shape (pop_size*layer_amt*2)
-        fit_pop (np.ndarray): Array of fitness values for each individual in population, of shape (pop_size*1)
+        pop (list[Individual): Population of individuals
+        size (int, optional): Size of the tournament. Defaults to 2.
 
     Returns:
         list(tuple(weigths, bias)): One individual in the population
     """
-
     # Get two random values that correspond to two individuals in the population
-    contestants = np.random.randint(0, len(pop), size=size)
+    contestants = [pop[random.randint(0, len(pop)-1)] for _ in range(size)]
+    winner = contestants[argmax(contestants)]  # It just checks which fitness of the two contestants is the highest with argmax (giving 0 or 1), and then get's that one from the contestants array
 
-    # Get the index of the fittest individual
-    # This is a bit dense, but it's likely faster than the original (this statement was not tested whatsoever).
-    maxIndex = contestants[np.argmax(fit_pop[contestants])]  # It just checks which fitness of the two contestants is the highest with argmax (giving 0 or 1), and then get's that one from the contestants array
-
-    return pop[maxIndex]
+    return winner
 
 
 def mutate(vals: np.ndarray, probability: float) -> np.ndarray:
@@ -102,43 +281,41 @@ def mutate(vals: np.ndarray, probability: float) -> np.ndarray:
     Returns:
         np.ndarray: Mutated weights or biases
     """
-    # TODO: Add non-linearity to the mutation
-    # TODO: Add swap mutation
-    mutation_mask = np.random.uniform(0, 1, size=vals.shape) <= probability
-    vals[mutation_mask] += np.random.normal(0, 1, size=vals[mutation_mask].shape)
+    vals += np.where(np.random.uniform(0, 1, size=vals.shape) <= probability, np.random.normal(0, 1, size=vals.shape), 0)
 
     return vals
 
 
 # crossover
-def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, method: int, cfg: dict) -> list[list[tuple[np.ndarray, np.ndarray]]]:
-    """Crossover function to generate offspring from the population
+def crossover(env: Environment, pop: list[Individual], method: int, cfg: dict) -> list[Individual]:
+    """
+    Perform crossover and mutation on a population of individuals to generate offspring.
 
     Args:
-        pop (list[tuple[np.ndarray, np.ndarray]]): Population formatted as a an array of models containing tuples of weights and biases.
-        fit_pop (np.ndarray): Array of fitness values for each individual in population, of shape (pop_size*1)
+        env (Environment): The environment in which the individuals are evaluated.
+        pop (list[Individual]): The population of individuals to perform crossover on.
+        method (int): The method of crossover to use. 
+                      0 for snipcombine, other values for blendcombine.
+        cfg (dict): Configuration dictionary containing mutation rate and domain limits.
 
     Returns:
-        np.ndarray: New population of offspring
-    """    
-    # TODO: Add incest, blijkbaar toch niet
+        list[Individual]: A list of offspring individuals generated from the crossover and mutation process.
+    """
 
     # Goes through pairs in the population and chooses two random fit individuals according to tournament
-    probs = softmax_activation(fit_pop)
-    for p in range(0,len(pop), 2):
-        # chosen = np.random.choice(len(pop), 2 , p=probs, replace=False)
-        # p1, p2 = pop[chosen[0]], pop[chosen[1]]
-        p1 = tournament(pop, fit_pop, 1)
-        p2 = tournament(pop, fit_pop, 1)
+    for _ in range(0,len(pop), 2):
+        p1 = tournament(pop, 1)
+        p2 = tournament(pop, 1)
 
         n_offspring =   np.random.randint(1, 6)
-        offspring: list[list[tuple[np.ndarray, np.ndarray]]] = []
+        offspring: list[Individual] = []
 
-        for f in range(n_offspring):
+        for _ in range(n_offspring):
             cross_prop = np.random.uniform(0,1) # Get a random ratio of influence between parents p1 and p2
-            child: list[tuple[np.ndarray, np.ndarray]] = []
-
-            for layer_p1, layer_p2 in zip(p1, p2):
+            child: Individual = Individual()
+            wnb: list[tuple[np.ndarray, np.ndarray]] = []
+            
+            for layer_p1, layer_p2 in zip(p1.wnb, p2.wnb):
                 # crossover, we have different methods depending on the island
                 if method == 0:
                     weights, bias = snipcombine(layer_p1, layer_p2)
@@ -153,253 +330,260 @@ def crossover(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarra
                 weights = np.clip(weights, cfg['dom_l'], cfg['dom_u'])
                 bias = np.clip(bias, cfg['dom_l'], cfg['dom_u'])
                 
-                child.append((weights , bias))
-
+                wnb.append((weights , bias))
+            
+            child.setWeights(wnb)
+            child.evaluate(env)
             offspring.append(child)
-
     return offspring
 
-def snipcombine(layer_p1, layer_p2):
-    weightspoint = np.random.uniform(0,1) * len(layer_p1[0])
-    biaspoint = np.random.uniform(0,1) * len(layer_p1[1])
+def snipcombine(layer_p1: tuple[np.ndarray, np.ndarray], layer_p2: tuple[np.ndarray, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Combines two layers by randomly selecting crossover points for weights and biases.
+    This function takes two layers, each represented by a tuple of numpy arrays (weights and biases),
+    and combines them by selecting random crossover points for the weights and biases. The resulting
+    combined weights and biases are returned as a tuple.
 
-                # Snip parts of parents together
+    Args:
+        layer_p1 (tuple[np.ndarray, np.ndarray]): The first layer's weights and biases.
+        layer_p2 (tuple[np.ndarray, np.ndarray]): The second layer's weights and biases.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: A tuple containing the combined weights and biases.
+    """
+
+    weightspoint = np.random.uniform(0,layer_p1[0].shape[0])
+    biaspoint = np.random.uniform(0,layer_p1[1].shape[0])
     weights = np.concatenate((layer_p1[0][:int(weightspoint)], layer_p2[0][int(weightspoint):]))
     bias = np.concatenate((layer_p1[1][:int(biaspoint)], layer_p2[1][int(biaspoint):]))
     return weights,bias
 
-def blendcombine(layer_p1, layer_p2, cross_prob):
+def blendcombine(layer_p1: tuple[np.ndarray, np.ndarray], layer_p2: tuple[np.ndarray, np.ndarray], cross_prob: float):
+    """
+    Combines two layers' weights and biases using a blend crossover method.
+    Args:
+        layer_p1 (tuple[np.ndarray, np.ndarray]): The first layer's weights and biases.
+        layer_p2 (tuple[np.ndarray, np.ndarray]): The second layer's weights and biases.
+        cross_prob (float): The crossover probability, determining the blend ratio.
+
+    Returns:
+        tuple: A tuple containing the combined weights and biases.
+    """
+
     weights = layer_p1[0]*cross_prob+layer_p2[0]*(1-cross_prob)
     bias = layer_p1[1]*cross_prob+layer_p2[1]*(1-cross_prob)
     return weights, bias
 
-def doomsday(env: Environment, pop: list[list[tuple[np.ndarray, np.ndarray]]],fit_pop:np.ndarray, other_info: np.ndarray, cfg: dict) -> tuple[list[list[tuple[np.ndarray, np.ndarray]]], np.ndarray, np.ndarray]:
+def doomsday(env: Environment, pop: list[Individual], cfg: dict) -> list[Individual]:
     """Kills the worst genomes, and replace with new best/random solutions
 
     Args:
-        pop (list[tuple[np.ndarray, np.ndarray]]): Population formatted as a an array of models containing tuples of weights and biases.
-        fit_pop (np.ndarray): Array of fitness values for each individual in population, of shape (pop_size*1)
+        env (Environment): Environment object for the evoman framework
+        pop (list[Individual]): Population formatted as a an array of models containing tuples of weights and biases.
+        cfg (dict): Configuration dictionary
 
     Returns:
-        list[tuple[np.ndarray, np.ndarray]]: New population
+        list[Individual]: New population
     """
 
-    worst_indices = np.argsort(fit_pop)[:len(pop) // 4] # A quarter of the individuals
-    best_individual = pop[np.argmax(fit_pop)]
-    print("!!!NUKES INCOMING!!!")
+    worst_indices = argsort(pop)[:len(pop) // 4] # A quarter of the individuals
+    best_individual = pop[argmax(pop)]
+    print("\n!!!NUKES INCOMING!!!")
 
-    assert np.argmax(fit_pop) not in worst_indices, "Best individual is also one of the worst"
+    assert argmax(pop) not in worst_indices, "Best individual is also one of the worst"
     # Assert size of worst_indices > 1
-    assert worst_indices.shape[0] > 1, f"Worst indices is empty {worst_indices.shape}. Len fit pop {fit_pop.shape}, len pop: {len(pop)}"
+    assert len(worst_indices) > 1, "Worst indices is too small"
 
     # Nuke the hell out of the worst, make them mutate like crazy
     for idx in worst_indices:
-        for layer_idx, (weights, biases) in enumerate(pop[idx]):
+        for layer_idx, (weights, biases) in enumerate(pop[idx].wnb):
             
             prob = np.random.uniform(0, 1)
             if prob <= 0.8:
                 weights, biases = nuke(cfg, weights, biases)
             else:
-                weights = mutate(best_individual[layer_idx][0], cfg['mutation'])
-                biases = mutate(best_individual[layer_idx][1], cfg['mutation'])
-            pop[idx][layer_idx] = (weights, biases)
+                weights = mutate(best_individual.wnb[layer_idx][0], cfg['mutation'])
+                biases = mutate(best_individual.wnb[layer_idx][1], cfg['mutation'])
+            pop[idx].wnb[layer_idx] = (weights, biases)
 
-        fit_pop[idx], other_info[idx] = evaluate(env, [pop[idx]])
+        pop[idx].evaluate(env)
 
-    return pop, fit_pop, other_info
+    return pop
 
-def nuke(cfg, weights, biases):
-    mutation_mask = np.random.uniform(0, 1, size=weights.shape) <= np.random.uniform(0, 1)
-    mutation_mask_b = np.random.uniform(0, 1, size=biases.shape) <= np.random.uniform(0, 1)
-    weights[mutation_mask] = np.random.uniform(cfg['dom_l'], cfg['dom_u'], size=weights[mutation_mask].shape)
-    biases[mutation_mask_b] = np.random.uniform(cfg['dom_l'], cfg['dom_u'], size=biases[mutation_mask_b].shape)
+def nuke(cfg: dict, weights: np.ndarray, biases: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Nuke the weights and biases of a layer
+
+    Args:
+        cfg (dict): Configuration dictionary
+        weights (np.ndarray): Weights of a layer
+        biases (np.ndarray): Biases of a layer
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: New weights and biases
+    """
+
+    mutation_mask_w = np.random.uniform(0, 1, size=weights.shape) <= np.random.uniform(0, 1)
+    weights = np.where(mutation_mask_w, np.random.uniform(cfg['dom_l'], cfg['dom_u'], size=weights.shape), weights)
+
+    mutation_mask_b = np.random.uniform(0, 1, size=weights.shape) <= np.random.uniform(0, 1)
+    biases = np.where(mutation_mask_b, np.random.uniform(cfg['dom_l'], cfg['dom_u'], size=biases.shape), biases)
     return weights, biases
 
-def generate_new_pop(envs: list[Environment], npop: int, n_hidden_neurons: list[int]) -> tuple[list[list[tuple[np.ndarray, np.ndarray]]], np.ndarray, np.ndarray, tuple[int, float, float], int]:
+def generate_new_pop(envs: list[Environment], npop: int, n_hidden_neurons: list[int]) -> tuple[list[Individual], tuple[int, float, float], int]:
     """Generate a new population of individuals
 
     Args:
+        envs (list[Environment]): List of Environment objects for the evoman framework
         npop (int): Amount of individuals in the population
         n_hidden_neurons (list[int]): Amount of hidden neurons in each layer
 
     Returns:
         tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray, tuple[int, float, float], int]: Population, fitness values, best individual, mean and standard deviation of the fitness values, and the initial generation number
     """
-    pop: list[list[tuple[np.ndarray, np.ndarray]]] = []
-    for i in range(npop):
-        individual = []
-        in_size = 20 # Amount of input neurons (sensors of the game)
-        for layer_size in n_hidden_neurons:
-            weights = np.random.uniform(-1,1,(in_size, layer_size))
-            bias = np.random.uniform(-1,1,(1, layer_size))
-            in_size = layer_size
-            individual.append((weights, bias))
+    pop: list[Individual] = []
+    for _ in range(npop):
+        individual = Individual()
+        individual.intialiseWeights(n_hidden_neurons)
+        individual.evaluate(envs[0])
         pop.append(individual)
 
-    ###############################################################################
-    # Zo ziet pop er uit!
-    # [
-    #     [                                      Model 1
-    #         ([1,1,...,0.5], [1,2,...,0.1])     Linear layer 1 (weights, bias)
-    #     ],
-    # ]
-    ###############################################################################
-    
-    fit_pop, other_info = evaluate(envs[-1], pop)
-    best = int(np.argmax(fit_pop))
-    mean = float(np.mean(fit_pop))
-    std = float(np.std(fit_pop))
+    best = int(argmax(pop))
+    mean = sum(pop) / float(len(pop))
+    std = stdev(pop)
     ini_g = int(0)
-    solutions = [pop, fit_pop]
-    env.update_solutions(solutions)
-    return pop, fit_pop, other_info, (best, mean, std), ini_g
+    env.update_solutions(pop)
+    return pop, (best, mean, std), ini_g
 
-def load_pop(env: Environment, experiment_name: str) -> tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray, tuple[int, float, float], int]:
-    """Load a population from a previous experiment
+# def load_pop(env: Environment, experiment_name: str) -> tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray, tuple[int, float, float], int]:
+#     """Load a population from a previous experiment
 
-    Args:
-        env (Environment): Environment object for the evoman framework
-        experiment_name (str): Name of the experiment
+#     Args:
+#         env (Environment): Environment object for the evoman framework
+#         experiment_name (str): Name of the experiment
 
-    Returns:
-        tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray, tuple[int, float, float], int]: Population, fitness values, best individual, mean and standard deviation of the fitness values, and the initial generation number
-    """
-    env.load_state()
-    pop = env.solutions[0]
-    fit_pop = env.solutions[1]
+#     Returns:
+#         tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray, tuple[int, float, float], int]: Population, fitness values, best individual, mean and standard deviation of the fitness values, and the initial generation number
+#     """
+#     env.load_state()
+#     pop = env.solutions[0]
+#     fit_pop = env.solutions[1]
 
-    best = int(np.argmax(fit_pop))
-    mean = float(np.mean(fit_pop))
-    std = float(np.std(fit_pop))
+#     best = int(np.argmax(fit_pop))
+#     mean = float(np.mean(fit_pop))
+#     std = float(np.std(fit_pop))
 
-    # finds last generation number
-    file_aux  = open(experiment_name+'/gen.txt','r')
-    ini_g = int(file_aux.readline())
-    file_aux.close()
-    return pop, fit_pop, (best, mean, std), ini_g
+#     # finds last generation number
+#     file_aux  = open(experiment_name+'/gen.txt','r')
+#     ini_g = int(file_aux.readline())
+#     file_aux.close()
+#     return pop, fit_pop, (best, mean, std), ini_g
 
-def make_species(pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, other_info: np.ndarray, cfg: dict) -> tuple[list[list[list[tuple[np.ndarray, np.ndarray]]]], list[np.ndarray], list[np.ndarray]]:
+def make_species(pop: list[Individual], cfg: dict) -> list[list[Individual]]:
     """Split the population into species
 
     Args:
-        pop (list[list[tuple[np.ndarray, np.ndarray]]]): Population formatted as a an array of models containing tuples of weights and biases.
-        fit_pop (np.ndarray): Array of fitness values for each individual in population, of shape (pop_size*1)
-        other_info (np.ndarray): Other information about the individuals in the population in shape (player_energy, enemy_energy, timesteps)
+        pop (list[Individual]): Population of individuals
         cfg (dict): Configuration dictionary
 
     Returns:
-        tuple[list[list[list[tuple[np.ndarray, np.ndarray]]]], list[np.ndarray], list[np.ndarray]]: Species population, fitness values, and other information
+        list[list[Individual]]: Species populations, fitness values, and other information
     """
-    species_pop: list[list[list[tuple[np.ndarray, np.ndarray]]]] = []
-    species_fit: list[np.ndarray] = []
-    species_other: list[np.ndarray] = []
+    species_pop: list[list[Individual]] = []
     spec_size = cfg['npop'] // cfg['species']
     for i in range(cfg['species']):
         species_pop.append(pop[i*spec_size:(i+1)*spec_size])
-        species_fit.append(fit_pop[i*spec_size:(i+1)*spec_size])
-        species_other.append(other_info[i*spec_size:(i+1)*spec_size])
     
-    return species_pop, species_fit, species_other
+    return species_pop
 
-def cross_species(species_pop: list[list[list[tuple[np.ndarray, np.ndarray]]]], species_fit: list[np.ndarray], species_other: list[np.ndarray], cfg: dict) -> tuple[list[list[list[tuple[np.ndarray, np.ndarray]]]], list[np.ndarray], list[np.ndarray]]:
+def cross_species(species_pop: list[list[Individual]], cfg: dict) -> list[list[Individual]]:
     """Crossover between species
 
     Args:
-        species_pop (list[list[list[tuple[np.ndarray, np.ndarray]]]]): Species population
-        species_fit (list[np.ndarray]): Fitness values for each individual in the species population
+        species_pop (list[list[Individual]]): Species population
         cfg (dict): Configuration dictionary
 
     Returns:
-        list[list[list[tuple[np.ndarray, np.ndarray]]]]: New species population
+        list[list[Individual]]: New species population
     """
     prob = random.uniform(0,1)
     if cfg['spec_cross'] >= prob:
         print("Crossing species")
         for target in range(cfg['species']-1):
-            origin_index = (target + 1) % cfg['species']
-            origin_fit = species_fit[origin_index]
+            origin_island = (target + 1) % cfg['species']
+            origin_species = species_pop[origin_island]
+            target_species = species_pop[target]
 
-            target_fit = species_fit[target]
-
-            best_origin_ind = np.argmax(origin_fit)
-            best_target_ind = np.argmax(target_fit)
+            best_origin_ind = argmax(origin_species)
+            best_target_ind = argmax(target_species)
 
             # Swap best of the two species
-            species_pop[target][best_target_ind], species_pop[origin_index][best_origin_ind] = species_pop[origin_index][best_origin_ind], species_pop[target][best_target_ind]
-            species_fit[target][best_target_ind], species_fit[origin_index][best_origin_ind] = species_fit[origin_index][best_origin_ind], species_fit[target][best_target_ind]
-            species_other[target][best_target_ind], species_other[origin_index][best_origin_ind] = species_other[origin_index][best_origin_ind], species_other[target][best_target_ind]
+            species_pop[target][best_target_ind], species_pop[origin_island][best_origin_ind] = species_pop[origin_island][best_origin_ind], species_pop[target][best_target_ind]
             
-        return species_pop, species_fit, species_other
+        return species_pop
     
-    return species_pop, species_fit, species_other
+    return species_pop
 
-def train(envs: list[Environment], pop: list[list[tuple[np.ndarray, np.ndarray]]], fit_pop: np.ndarray, other_pop: np.ndarray, best: int, ini_g: int, cfg: dict) -> None:
+def train(envs: list[Environment], pop: list[Individual], best: int, ini_g: int, cfg: dict) -> None:
     """Train/Evolution loop for the genetic algorithm
 
     Args:
         env (Environment): Environment object for the evoman framework
-        pop (list[list[tuple[np.ndarray, np.ndarray]]]): Population formatted as a an array of models containing tuples of weights and biases.
-        fit_pop (np.ndarray): Array of fitness values for each individual in population, of shape (pop_size*1)
+        pop (list[Individual]): Population formatted as a an array of Individuals containing metrics, weights and biases.
         best (int): Index of the best individual in the population
         ini_g (int): Which generation to start at
         cfg (dict): Configuration dictionary
     """
  
     no_improvement = 0
-    last_best = fit_pop[best]
-    c = 1.
+    last_best: float = pop[best].fitness
     cur_env = 0
 
-    species_pop, species_fit, species_other = make_species(pop, fit_pop, other_pop, cfg)
-    last_sols = [0]*cfg['species']
+    species_pop = make_species(pop, cfg)
     spec_notimproved = [0]*cfg['species']
 
     # Just extra keeping track of the best solution, as not to lose this
     best_individuals = []
-    for k in range(len(species_pop)):
-        best_index = np.argmax(species_fit[k])
-        best_individuals.append([species_pop[k][best_index], species_fit[k][best_index], species_other[k][best_index]])
+    for specimen in species_pop:
+        best_index = argmax(specimen)
+        best_individuals.append(pop[best_index])
 
     # Main training loop
     for g in range(ini_g+1, cfg['gens']):
         # Loop through all the islands and train them for one generation
-        for i, popinfo in enumerate(zip(species_pop, species_fit, species_other)):
-            pop, fit, other = popinfo
-            species_pop[i], species_fit[i], species_other[i], last_sols[i], spec_notimproved[i], best_individuals[i], c = train_spec(envs[cur_env], pop, fit, other, last_sols[i], best_individuals[i], spec_notimproved[i], cfg['comb_meths'][i], cfg['scaletype'][i], c, cfg)
+        for i, island_pop in enumerate(species_pop):
+            species_pop[i], spec_notimproved[i], best_individuals[i] = train_spec(envs[cur_env], island_pop, best_individuals[i], spec_notimproved[i], cfg['comb_meths'][i], cfg['scaletype'][i], cfg) # type: ignore
 
         # Make lists of the complete population to log the absolute best individual and other statistics
-        pop = []
-        fit = np.array([])
-        other_info = np.empty((0, species_other[0].shape[1]))
-        for spec_pop, spec_fit, spec_other in zip(species_pop, species_fit, species_other):
-            pop += spec_pop
-            fit = np.append(fit, spec_fit)
-            other_info = np.append(other_info, spec_other, axis=0)
+        total_pop: list[Individual] = []
+        for spec_pop in species_pop:
+            total_pop += spec_pop.copy()
 
-        best = int(np.argmax(fit))
-        std  =  np.std(fit)
-        mean = np.mean(fit) 
-        # c += min(2, 0.01) # Was used to increase the c value of the sigma scaling, but it was not used in the end
+        # Get statistics
+        best = argmax(total_pop)
+        std  = stdev(total_pop)
+        mean = sum(total_pop) / float(len(total_pop))
+
+        # Memory for best solution
+        best_individual = total_pop[best]
 
         # saves results
-        save_txt(experiment_name+'/results.txt', '\n'+str(g)+' '+str(round(fit[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
-        print( '\n GENERATION '+str(g)+' '+str(round(fit[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)))
-        wandb.log({'Generation': ini_g, 'Best Fitness': fit[best], 'Mean Fitness': mean, 'Std Fitness': std, 'Best Player Health': other_info[best][0], 'Best Enemy Health': other_info[best][1], 'Best Timesteps': other_info[best][2],'Gain': other_info[best][3], 'Best Dead Enemies': other_info[best][4], 'Current Env': cur_env})
+        save_txt(experiment_name+'/results.txt', '\n'+str(g)+' '+str(round(best_individual.fitness,6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
+        print( '\n GENERATION '+str(g)+' '+str(round(best_individual.fitness,6))+' '+str(round(mean,6))+' '+str(round(std,6)))
+        wandb.log({'Generation': ini_g, 'Best Fitness': best_individual.fitness, 'Mean Fitness': mean, 'Std Fitness': std, 'Best Player Health': best_individual.player_energy, 'Best Enemy Health': best_individual.enemy_energy, 'Best Timesteps': best_individual.timesteps,'Gain': best_individual.gain, 'Best Dead Enemies': best_individual.dead_enemies, 'Current Env': cur_env})
 
         # saves generation number
         save_txt(experiment_name+'/gen.txt', str(i))
 
         # saves file with the best solution
-        save_weights(experiment_name, pop[best])
+        save_weights(experiment_name, best_individual.wnb)
 
         # saves simulation state
-        solutions = [pop, fit]
         env = envs[cur_env]
-        env.update_solutions(solutions)
+        env.update_solutions(total_pop)
         env.save_state()
 
-        species_pop, species_fit, species_other = cross_species(species_pop, species_fit, species_other, cfg)
-        cur_best = fit[best]
+        species_pop = cross_species(species_pop, cfg)
+        cur_best = total_pop[best].fitness
         if cur_best <= last_best:
             no_improvement += 1
         else:
@@ -407,17 +591,30 @@ def train(envs: list[Environment], pop: list[list[tuple[np.ndarray, np.ndarray]]
             no_improvement = 0
         
         # Go to the next environment with more enemies if no improvement or high fitness
-        if fit[best] > 90 or no_improvement >= 450:
+        if total_pop[best] > 90 or no_improvement >= 450:
             cur_env += 1
+            cur_env = min(cur_env, len(envs)-1) # Make sure we don't go out of bounds with the environments
+
             # Re-evaluate the population in the new environment
-            for j, p in enumerate(species_pop):
-                pfit, pother = evaluate(envs[cur_env], p)
-                species_fit[j] = pfit
-                species_other[j] = pother
+            for best_ind in best_individuals:
+                best_ind.evaluate(envs[cur_env])
+            
+            for spec in species_pop:
+                for p in spec:
+                    p.evaluate(envs[cur_env])
 
             no_improvement = 0
 
-        cur_env = min(cur_env, len(envs)-1)
+        # Check if the best stored individual is still the best in the population (or one that's better)
+        appendbestind = True
+        for p in species_pop:
+            if p[argmax(p)] >= best_individual:
+                appendbestind = False
+
+        if appendbestind:
+            species_select = np.random.randint(0, len(species_pop))
+            species_pop[species_select][argmin(species_pop[species_select])] = best_individual
+
 
     fim = time.time() # prints total execution time for experiment
     print( '\nExecution time: '+str(round((fim-ini)/60))+' minutes \n')
@@ -428,79 +625,95 @@ def train(envs: list[Environment], pop: list[list[tuple[np.ndarray, np.ndarray]]
 
     env.state_to_log() 
 
-def train_spec(env, pop, fit, other_pop, last_sol, best_individual, spec_notimproved, comb_meth, scale_type, c, cfg):
-    offspring = crossover(pop, fit, comb_meth, cfg)  # crossover
-    fit_offspring, other_info = evaluate(env, offspring)   # evaluation
-    
+def train_spec(env: Environment, 
+               pop: list[Individual],
+               best_individual: Individual, 
+               spec_notimproved: int, 
+               comb_meth: int, 
+               scale_type: int,
+               cfg: dict) -> tuple[list[Individual], float, Individual]:
+    """Train/Evolution loop for the genetic algorithm, for one island of species
+
+    Args:
+        env (Environment): Environment object for the evoman framework
+        pop (list[Individual]): Population formatted as a an array of Individuals containing tuples of weights and biases.
+        best_individual (Individual): Best individual in the population of all generations (the best agent is invincible?!)
+        spec_notimproved (int): Amount of generations the species has not improved
+        comb_meth (int): Crossover method
+        scale_type (int): Scaling type
+        cfg (dict): Configuration dictionary
+
+    Returns:
+        tuple[list[Individual], float, Individual]: Population, amount of generations the species has not improved, best individual in the population
+    """
+
+    offspring = crossover(env, pop, comb_meth, cfg)  # crossover
     # Add offspring to the population
     pop = pop + offspring
-    fit = np.append(fit,fit_offspring)
-    fitforcheck = np.max(fit)
-    other = np.append(other_pop, other_info, axis=0)
     
-    best = int(np.argmax(fit)) #best solution in generation
-    fit[best] = float(evaluate(env, [pop[best] ])[0][0]) # repeats best eval, for stability issues
-    best_sol = fit[best]
-
+    # Evaluate the new population
+    best = argmax(pop) #best solution in generation
+    
     # selection
-    fit_pop_cp = fit.copy()
-    
-    if scale_type == 1:
-        fit_pop_norm = sigma_scaling(fit_pop_cp, 2)
+    pop_cp = pop.copy()
+    fit2scale = np.array(list(map(lambda x: x.fitness, pop_cp))) # Get list of fitnesses to scale
+
+    if scale_type == 1: # Defined in config file
+        fit_pop_norm = sigma_scaling(fit2scale, 2)
     else:
-        fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit_pop_cp), fit_pop_cp))) # avoiding negative probabilities, as fitness is ranges from negative numbers
+        fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit2scale), fit2scale))) # avoiding negative probabilities, as fitness is ranges from negative numbers
 
     probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
-    # probs = softmax_activation(fit_pop) # other way of normalizing fitness values to probabilities
+    # Chose indices corresponding to individuals in the population, randomly chosen according to their fitness
     chosen = np.random.choice(len(pop), cfg['npop'] // cfg['species'] , p=probs, replace=False)
-    chosen = np.append(chosen[1:],best)
+    chosen = np.append(chosen[1:],best) # Just to be sure we don't lose the best individual
 
-    newpop: list[list[tuple[np.ndarray, np.ndarray]]] = []
-    newfit = []
-    newinfo = []
-    for c in chosen:
-        newpop.append(pop[c])
-        newinfo.append(other[c])
-        newfit.append(fit[c])
-
-    pop = newpop
-    fit = np.array(newfit)
-    other = np.array(newinfo)
-    assert best_sol in fit, f"Best individual {best_individual[1]} not in population 1 {best_sol}"
+    # Replace the population with the chosen individuals
+    pop2replace: list[Individual] = [pop[int(c)] for c in chosen]
+    pop = pop2replace
 
     # searching new areas
+    best = argmax(pop) #best solution in generation
+    pop[best].evaluate(env) # repeats best eval, for stability issues
+    best_sol = pop[best]
 
     # Update so that the fitness of the stored best individual is still correct in the current environment
-    best_individual[1], best_individual[2] = evaluate(env, [best_individual[0]])
-    if best_sol <= best_individual[1]:
+    if best_sol <= best_individual:
         spec_notimproved += 1
-
     else:
-        last_sol = best_sol
-        best = int(np.argmax(fit))
-        best_individual = [pop[best], fit[best], other[best]]
+        best = argmax(pop)
+        best_individual = pop[best]
         spec_notimproved = 0
-
+    
     if spec_notimproved >= cfg['doomsteps']:
         save_txt(experiment_name+'/results.txt', '\ndoomsday', 'a')
-        assert other.shape[0] == fit.shape[0]
-        pop, fit, other = doomsday(env, pop,fit, other, cfg)
+        # assert max(pop) == best_sol, f"Best fit {best_sol} not in population 3 {max(pop)}"
+        pop = doomsday(env, pop, cfg)
         spec_notimproved = 0
 
-    assert best_sol in fit, f"Best individual {best_individual[1]} not in population 2"
-
     # Replace one in population with the best stored individual for this island
-    if best_individual[1] > np.max(fit):
-        replace_index = np.argmin(fit)
-        pop[replace_index] = best_individual[0]
-        fit[replace_index] = best_individual[1]
-        other[replace_index] = best_individual[2]
-
-    assert best_sol in fit, f"Best individual {best_individual[1]} not in population 3"
+    if best_individual > max(pop):
+        replace_index = argmin(pop)
+        pop[replace_index] = best_individual
             
-    return pop, fit, other, last_sol, spec_notimproved, best_individual, c
+    return pop, spec_notimproved, best_individual
+
 
 #### UTILS ####
+
+
+# normalizes
+def norm(x, pfit_pop):
+    
+    if ( max(pfit_pop) - min(pfit_pop) ) > 0:
+        x_norm = ( x - min(pfit_pop) )/( max(pfit_pop) - min(pfit_pop) )
+    else:
+        x_norm = 0
+
+    if x_norm <= 0:
+        x_norm = 0.0000000001
+    return x_norm
+
 def print_dict(d: dict) -> None:
     """Print a dictionary
 
@@ -510,7 +723,30 @@ def print_dict(d: dict) -> None:
     for k, v in d.items():
         print(f'{k}: {v}')
 
-def save_weights(name: str, individual: tuple[np.ndarray, np.ndarray]) -> None:
+def stdev(list) -> float:
+    """Calculate the standard deviation of a list
+
+    Args:
+        list (list): List of values
+
+    Returns:
+        float: Standard deviation of the list
+    """
+    mean = sum(list) / len(list)
+    variance = sum((x - mean) ** 2 for x in list) / len(list)
+    return sqrt(variance)
+
+# For explanation of arg functions look at the corresponding numpy versions (np.argmax etc.)
+def argmax(iterable): # from https://stackoverflow.com/questions/16945518/finding-the-index-of-the-value-which-is-the-min-or-max-in-python
+    return max(enumerate(iterable), key=lambda x: x[1])[0]
+
+def argmin(iterable): # from https://stackoverflow.com/questions/16945518/finding-the-index-of-the-value-which-is-the-min-or-max-in-python
+    return min(enumerate(iterable), key=lambda x: x[1])[0]
+
+def argsort(seq): # http://stackoverflow.com/questions/3071415/efficient-method-to-calculate-the-rank-vector-of-a-list-in-python
+    return sorted(range(len(seq)), key=seq.__getitem__)
+
+def save_weights(name: str, individual: list[tuple[np.ndarray, np.ndarray]]) -> None:
     file = gzip.open(name+'/best', 'wb', compresslevel = 5)
     pickle.dump(individual, file, protocol=2) # type: ignore
     file.close()
@@ -519,6 +755,8 @@ def save_txt(name: str, text: str, savetype: str = 'w') -> None:
     file_aux  = open(name,savetype)
     file_aux.write(text)
     file_aux.close()
+
+
 
 def main(envs: list[Environment], args: argparse.Namespace, cfg: dict) -> None:
     """Main function for the genetic algorithm
@@ -541,18 +779,38 @@ def main(envs: list[Environment], args: argparse.Namespace, cfg: dict) -> None:
     # initializes population loading old solutions or generating new ones
     if not os.path.exists(args.experiment_name+'/evoman_solstate') or args.new_evolution:
         print( '\nNEW EVOLUTION\n')
-        pop, fit_pop, other_info, fit_pop_stats, ini_g = generate_new_pop(envs, cfg['npop'], cfg['archetecture'])
+        pop, fit_pop_stats, ini_g = generate_new_pop(envs, cfg['npop'], cfg['archetecture'])
 
-    else:
-        print( '\nCONTINUING EVOLUTION\n')
-        pop, fit_pop, fit_pop_stats, ini_g = load_pop(env, args.experiment_name)
+    # else:
+    #     print( '\nCONTINUING EVOLUTION\n')
+    #     pop, fit_pop, fit_pop_stats, ini_g = load_pop(env, args.experiment_name)
 
     # saves results for first pop
     best, mean, std = fit_pop_stats
-    save_txt(experiment_name+'/results.txt', '\n\ngen best mean std' + '\n'+str(ini_g)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
-    print( '\n GENERATION '+str(ini_g)+' '+str(round(fit_pop[best],6))+' '+str(round(mean,6))+' '+str(round(std,6)))
+    save_txt(experiment_name+'/results.txt', '\n\ngen best mean std' + '\n'+str(ini_g)+' '+str(round(pop[best].fitness,6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
+    print( '\n GENERATION '+str(ini_g)+' '+str(round(pop[best].fitness ,6))+' '+str(round(mean,6))+' '+str(round(std,6)))
 
-    train(envs, pop, fit_pop, other_info, best, ini_g, cfg)
+    train(envs, pop, best, ini_g, cfg)
+
+def checksame(pop: tuple[list[list[tuple[np.ndarray, np.ndarray]]],list[list[tuple[np.ndarray, np.ndarray]]]], fit_pop: tuple[np.ndarray, np.ndarray], other_pop: tuple[np.ndarray,np.ndarray], cfg: dict) -> None:
+    """Check if the values in pop, fit_pop, and other_pop are the same
+
+    Args:
+        pop (tuple[list[list[tuple[np.ndarray, np.ndarray]]],list[list[tuple[np.ndarray, np.ndarray]]]]): Population formatted as a an array of models containing tuples of weights and biases.
+        fit_pop (tuple[np.ndarray, np.ndarray]): Array of fitness values for each individual in population, of shape (pop_size*1)
+        other_pop (tuple[np.ndarray,np.ndarray]): Other information about the individuals in the population in shape (player_energy, enemy_energy, timesteps)
+    """
+
+    pop1, pop2 = pop
+    fit1, fit2 = fit_pop
+    other1, other2 = other_pop
+
+    assert np.allclose(pop1, pop2), "Populations are not the same"
+    assert np.allclose(fit1, fit2), "Fitness values are not the same"
+    assert np.allclose(other1, other2), "Other information is not the same"
+
+    print("All checks passed")
+
 
 if __name__ == "__main__": # Basically just checks if the script is being run directly or imported as a module
 
@@ -594,7 +852,7 @@ if __name__ == "__main__": # Basically just checks if the script is being run di
 
     # initializes simulation in individual evolution mode, for single static enemy.
     envs = []
-    enemies = [[8],[7,8],[6,7,8],[5,6,7,8],[4,5,6,7,8],[3,4,5,6,7,8],[2,3,4,5,6,7,8],[1,2,3,4,5,6,7,8]]
+    enemies = [[5,6,7,8],[4,5,6,7,8],[3,4,5,6,7,8],[2,3,4,5,6,7,8],[1,2,3,4,5,6,7,8]]
     for i in range(len(enemies)):
         if not os.path.exists(experiment_name+f'{i}'):
             os.makedirs(experiment_name+f'{i}')
