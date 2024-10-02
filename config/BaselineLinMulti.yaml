@@ -1,5 +1,5 @@
 experiment_name: 'dummy'          # Name of the experiment
-archetecture: [10]           # Number of neurons in each layer
+archetecture: [10,5]           # Number of neurons in each layer
 activation: ['relu','relu','sig'] # Activation function for each layer
 dom_u: 1                          # Upper bound of the domain
 dom_l: -1                          # Lower bound of the domain

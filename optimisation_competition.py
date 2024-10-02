@@ -62,6 +62,7 @@ class Individual:
         """
 
         self.wnb : list[tuple[np.ndarray, np.ndarray]] = []
+        self.n_hidden_neurons = n_hidden_neurons
         in_size = 20 # Amount of input neurons (sensors of the game)
         for layer_size in n_hidden_neurons:
             weights = np.random.uniform(-1,1,(in_size, layer_size))
@@ -74,6 +75,9 @@ class Individual:
         Args:
             wnb (list[tuple[np.ndarray, np.ndarray]]): List of tuples containing the weights and biases for each layer
         """
+        assert len(wnb) == len(self.wnb), f"Length of wnb {len(wnb)} does not match the length of the individual's weights and biases {len(self.wnb)}"
+        assert all([w[0].shape == wnb[i][0].shape for i, w in enumerate(self.wnb)]), "Shapes of weights do not match"
+        assert all([b[1].shape == wnb[i][1].shape for i, b in enumerate(self.wnb)]), "Shapes of biases do not match"
         self.wnb = wnb
 
     def evaluate(self, env: Environment) -> None:
@@ -313,6 +317,7 @@ def crossover(env: Environment, pop: list[Individual], method: int, cfg: dict) -
         for _ in range(n_offspring):
             cross_prop = np.random.uniform(0,1) # Get a random ratio of influence between parents p1 and p2
             child: Individual = Individual()
+            child.intialiseWeights(cfg['archetecture']) # Initialize the weights and biases of the child
             wnb: list[tuple[np.ndarray, np.ndarray]] = []
             
             for layer_p1, layer_p2 in zip(p1.wnb, p2.wnb):
@@ -329,6 +334,9 @@ def crossover(env: Environment, pop: list[Individual], method: int, cfg: dict) -
                 # limit between -1 and 1 using Tanh function
                 weights = np.clip(weights, cfg['dom_l'], cfg['dom_u'])
                 bias = np.clip(bias, cfg['dom_l'], cfg['dom_u'])
+
+                assert weights.shape == layer_p1[0].shape, "Weights shape does not match"
+                assert bias.shape == layer_p1[1].shape, "Biases shape does not match"
                 
                 wnb.append((weights , bias))
             
@@ -356,6 +364,8 @@ def snipcombine(layer_p1: tuple[np.ndarray, np.ndarray], layer_p2: tuple[np.ndar
     biaspoint = np.random.uniform(0,layer_p1[1].shape[0])
     weights = np.concatenate((layer_p1[0][:int(weightspoint)], layer_p2[0][int(weightspoint):]))
     bias = np.concatenate((layer_p1[1][:int(biaspoint)], layer_p2[1][int(biaspoint):]))
+    assert weights.shape == layer_p1[0].shape, "Weights shape does not match"
+    assert bias.shape == layer_p1[1].shape, "Biases shape does not match"
     return weights,bias
 
 def blendcombine(layer_p1: tuple[np.ndarray, np.ndarray], layer_p2: tuple[np.ndarray, np.ndarray], cross_prob: float):
@@ -372,6 +382,8 @@ def blendcombine(layer_p1: tuple[np.ndarray, np.ndarray], layer_p2: tuple[np.nda
 
     weights = layer_p1[0]*cross_prob+layer_p2[0]*(1-cross_prob)
     bias = layer_p1[1]*cross_prob+layer_p2[1]*(1-cross_prob)
+    assert weights.shape == layer_p1[0].shape, "Weights shape does not match"
+    assert bias.shape == layer_p1[1].shape, "Biases shape does not match"
     return weights, bias
 
 def doomsday(env: Environment, pop: list[Individual], cfg: dict) -> list[Individual]:
@@ -396,16 +408,17 @@ def doomsday(env: Environment, pop: list[Individual], cfg: dict) -> list[Individ
 
     # Nuke the hell out of the worst, make them mutate like crazy
     for idx in worst_indices:
+        wnb = []
         for layer_idx, (weights, biases) in enumerate(pop[idx].wnb):
-            
             prob = np.random.uniform(0, 1)
             if prob <= 0.8:
                 weights, biases = nuke(cfg, weights, biases)
             else:
                 weights = mutate(best_individual.wnb[layer_idx][0], cfg['mutation'])
                 biases = mutate(best_individual.wnb[layer_idx][1], cfg['mutation'])
-            pop[idx].wnb[layer_idx] = (weights, biases)
+            wnb.append((weights, biases))
 
+        pop[idx].setWeights(wnb)
         pop[idx].evaluate(env)
 
     return pop
@@ -421,12 +434,14 @@ def nuke(cfg: dict, weights: np.ndarray, biases: np.ndarray) -> tuple[np.ndarray
     Returns:
         tuple[np.ndarray, np.ndarray]: New weights and biases
     """
-
+    # Create mutation mask for weights
     mutation_mask_w = np.random.uniform(0, 1, size=weights.shape) <= np.random.uniform(0, 1)
     weights = np.where(mutation_mask_w, np.random.uniform(cfg['dom_l'], cfg['dom_u'], size=weights.shape), weights)
 
-    mutation_mask_b = np.random.uniform(0, 1, size=weights.shape) <= np.random.uniform(0, 1)
+    # Create mutation mask for biases
+    mutation_mask_b = np.random.uniform(0, 1, size=biases.shape) <= np.random.uniform(0, 1)
     biases = np.where(mutation_mask_b, np.random.uniform(cfg['dom_l'], cfg['dom_u'], size=biases.shape), biases)
+    
     return weights, biases
 
 def generate_new_pop(envs: list[Environment], npop: int, n_hidden_neurons: list[int]) -> tuple[list[Individual], tuple[int, float, float], int]:
