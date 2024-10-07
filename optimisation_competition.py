@@ -10,7 +10,7 @@ import sys
 
 from evoman.environment import Environment
 from assignment1_test_controller import player_controller
-from optimization_specialist_assignment1 import sigma_scaling
+from optimization_specialist_assignment1 import sigma_scaling, swap_mutation
 
 # imports other libs
 import time
@@ -25,6 +25,7 @@ import statistics
 from nnlayers import tanh_activation, sigmoid_activation, softmax_activation
 from functools import total_ordering, reduce
 from operator import add
+import copy
 
 VERBOSE = False
 
@@ -39,6 +40,7 @@ random.seed(42)
 class Individual:
 
     def __init__(self, 
+                 id: int | None = None,
                  fitness: float = 0, 
                  player_energy: float = 0, 
                  enemy_energy: float = 0, 
@@ -46,13 +48,19 @@ class Individual:
                  gain: float = 0, 
                  dead_enemies: int = 0):
         
-        self.wnb: list[tuple[np.ndarray, np.ndarray]] = []
+        self.wnb: tuple[tuple[np.ndarray, np.ndarray], ...]
         self.fitness = fitness
+        self.fitnessalt = fitness
+        self.front = 0
+        self.crowding_dist = 0.
         self.player_energy = player_energy
         self.enemy_energy = enemy_energy
         self.timesteps = timesteps
         self.gain = gain
         self.dead_enemies = dead_enemies
+        self.dominates = set()
+        self.dominated_by = 0
+        self.id = id if id is not None else random.randint(0, 1000000)
 
     def intialiseWeights(self, n_hidden_neurons: list[int]) -> None:
         """
@@ -61,24 +69,26 @@ class Individual:
             n_hidden_neurons (list[int]): A list containing the number of neurons in each hidden layer.
         """
 
-        self.wnb : list[tuple[np.ndarray, np.ndarray]] = []
+        wnblist : list[tuple[np.ndarray, np.ndarray]] = []
         self.n_hidden_neurons = n_hidden_neurons
         in_size = 20 # Amount of input neurons (sensors of the game)
         for layer_size in n_hidden_neurons:
             weights = np.random.uniform(-1,1,(in_size, layer_size))
             bias = np.random.uniform(-1,1,(1, layer_size))
             in_size = layer_size
-            self.wnb.append((weights, bias))
+            wnblist.append((weights, bias))
+        self.wnb = tuple(wnblist)
 
-    def setWeights(self, wnb: list[tuple[np.ndarray, np.ndarray]]) -> None:
+    def setWeights(self, wnb: list[tuple[np.ndarray, np.ndarray]], force = False) -> None:
         """ Set the weights and biases of the individual
         Args:
             wnb (list[tuple[np.ndarray, np.ndarray]]): List of tuples containing the weights and biases for each layer
         """
-        assert len(wnb) == len(self.wnb), f"Length of wnb {len(wnb)} does not match the length of the individual's weights and biases {len(self.wnb)}"
-        assert all([w[0].shape == wnb[i][0].shape for i, w in enumerate(self.wnb)]), "Shapes of weights do not match"
-        assert all([b[1].shape == wnb[i][1].shape for i, b in enumerate(self.wnb)]), "Shapes of biases do not match"
-        self.wnb = wnb
+        if not force:
+            assert len(wnb) == len(self.wnb), f"Length of wnb {len(wnb)} does not match the length of the individual's weights and biases {len(self.wnb)}"
+            assert all([w[0].shape == wnb[i][0].shape for i, w in enumerate(self.wnb)]), "Shapes of weights do not match"
+            assert all([b[1].shape == wnb[i][1].shape for i, b in enumerate(self.wnb)]), "Shapes of biases do not match"
+        self.wnb = tuple(wnb)
 
     def evaluate(self, env: Environment) -> None:
         """Evaluate the individual in the given environment
@@ -86,47 +96,84 @@ class Individual:
         Args:
             env (Environment): Environment object for the evoman framework
         """        
-        f, p, e, t, de, g = env.play(pcont=self.wnb)
+        f, p, e, t, de, g, fa = env.play(pcont=self.wnb)
+        if self.fitness != 0 and f < self.fitness:
+            print(f"Fitness of individual {self.id} decreased from {self.fitness} to {f}")
         self.fitness = f
+        self.fitnessarray = fa
         self.player_energy = p
         self.enemy_energy = e
         self.timesteps = t
         self.gain = g
         self.dead_enemies = de
+        # self.fitnessalt = 0.6*(100 - e) + 0.4*p - np.log(t)
+
+    def check_domination(self, other: object):
+        """Check if this individual dominates another individual
+
+        Args:
+            other (Individual): Another individual
+
+        Returns:
+            bool: True if this individual dominates the other, False otherwise
+        """
+        if isinstance(other, Individual):
+            gtList = [fs > so for fs, so in zip(self.fitnessarray, other.fitnessarray)]  # Greater than list
+            geList = [fs >= so for fs, so in zip(self.fitnessarray, other.fitnessarray)] # Greater or equal list
+
+            if all(geList) and any(gtList): # If all values are greater or equal and at least one is greater, this individual dominates the other
+                self.dominates.add(other)
+                other.dominated_by += 1
+                return True
+            return False
+        else:
+            return NotImplemented
 
     # Bunch of magic methods to make the Individual class work with the genetic algorithm (if you want to find out more, google function overloading)
     def __str__(self) -> str:
-        return f"Individual: {self.fitness}"
+        return f"Ind {self.id}: {self.fitness:.2f}"
 
-    def __repr__(self) -> float:
-        return self.fitness
+    def __repr__(self) -> str:
+        return self.__str__()
     
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Individual):
-            return False
-        return self.fitness == other.fitness
+            return NotImplemented
+        return self.id == other.id
     
     def __ne__(self, other: object) -> bool:
         return not self.__eq__(other)
     
     def __lt__(self, other: object) -> bool:
-        if not isinstance(other, Individual):
-            return False
-        return self.fitness < other.fitness
+        if isinstance(other, Individual):
+            return self.fitness < other.fitness
+        elif isinstance(other, (int, float)):
+            return self.fitness < other
+        return NotImplemented
     
     def __le__(self, other: object) -> bool:
-        return self.__lt__(other) or self.__eq__(other)
+        if isinstance(other, Individual):
+            return self.__lt__(other) or self.fitness == other.fitness
+        elif isinstance(other, (int, float)):
+            return self.fitness <= other
+        return NotImplemented
     
     def __gt__(self, other: object) -> bool:
-        if not isinstance(other, Individual):
-            return False
-        return self.fitness > other.fitness
+        if isinstance(other, (int, float)):
+            return self.fitness > other
+        elif isinstance(other, Individual):
+            return self.fitness > other.fitness
+        return NotImplemented
     
     def __ge__(self, other: object) -> bool:
-        return self.__gt__(other) or self.__eq__(other)
+        if isinstance(other, Individual):
+            return self.__gt__(other) or self.fitness == other.fitness
+        elif isinstance(other, (int, float)):
+            return self.fitness >= other
+        return NotImplemented
     
     def __hash__(self) -> int:
-        return hash(self.fitness)
+        return self.id
     
     def __add__(self, other: object) -> float:
         if isinstance(other, Individual):
@@ -271,10 +318,63 @@ def tournament(pop: list[Individual], size: int = 2) -> Individual:
     """
     # Get two random values that correspond to two individuals in the population
     contestants = [pop[random.randint(0, len(pop)-1)] for _ in range(size)]
-    winner = contestants[argmax(contestants)]  # It just checks which fitness of the two contestants is the highest with argmax (giving 0 or 1), and then get's that one from the contestants array
+    #print(len(contestants))
+    if contestants[0].front == contestants[1].front: # If the fronts are equal, return the individual with the highest crowding distance
+        return max([contestants[0], contestants[1]], key=lambda x: x.crowding_dist)
+    return max(contestants, key=lambda x: x.front) # Return the individual with the highest front
 
-    return winner
+def non_dominant_sorting(pop):
+    # Initialize dominance sets
+    fronts = [[]]
+    # Check for duplicates in pop
+    ids = [ind.id for ind in pop]
+    if len(ids) != len(set(ids)):
+        for i, ind in enumerate(pop):
+            ind.id = i
+    for ind1 in pop:
+        ind1.dominates = set()
+        ind1.dominated_by = 0
+        for ind2 in pop:
+            ind1.check_domination(ind2)
+        
+    for ind1 in pop:
+        if ind1.dominated_by == 0:
+            ind1.front = 0
+            fronts[0].append(ind1)
 
+    # Perform non-dominant sorting
+    current_front = 0
+    while fronts[current_front]:
+        next_front = []
+        for ind1 in fronts[current_front]:
+            for ind2 in list(ind1.dominates):
+                try:
+                    ind2.dominated_by -= 1
+                except KeyError:
+                    print(f"Individual {ind2.id} does not dominate {ind1.id}. \nDominates: {ind2.dominates}, \nDominated by: {ind2.dominated_by}")
+                    pass
+                if ind2.dominated_by == 0:
+                    ind2.front = current_front + 1
+                    next_front.append(ind2)
+        current_front += 1
+        fronts.append(next_front)
+
+    return fronts[:-1]  # Remove the last empty front
+
+def crowding_distance_sorting(front: list[Individual]) -> list[Individual]:
+    for ind in front:
+        ind.crowding_dist = 0
+
+    # print(front[0].fitnessarray)
+    for m in range(len(front[0].fitnessarray)):
+        front.sort(key=lambda x: x.fitnessarray[m])
+        front[0].crowding_dist = float('inf')
+        front[len(front)-1].crowding_dist = float('inf')
+        
+        for i in range(1, len(front)-1):
+            front[i].crowding_dist += front[i+1].fitness - front[i-1].fitness
+
+    return front
 
 def mutate(vals: np.ndarray, probability: float) -> np.ndarray:
     """Mutate the values of a layer
@@ -291,7 +391,7 @@ def mutate(vals: np.ndarray, probability: float) -> np.ndarray:
 
 
 # crossover
-def crossover(env: Environment, pop: list[Individual], method: int, cfg: dict) -> list[Individual]:
+def crossover(env: Environment, pop: list[Individual], method: tuple[int, int], cfg: dict) -> list[Individual]:
     """
     Perform crossover and mutation on a population of individuals to generate offspring.
 
@@ -308,8 +408,8 @@ def crossover(env: Environment, pop: list[Individual], method: int, cfg: dict) -
 
     # Goes through pairs in the population and chooses two random fit individuals according to tournament
     for _ in range(0,len(pop), 2):
-        p1 = tournament(pop, 1)
-        p2 = tournament(pop, 1)
+        p1 = tournament(pop, 2)
+        p2 = tournament(pop, 2)
 
         n_offspring =   np.random.randint(1, 6)
         offspring: list[Individual] = []
@@ -322,14 +422,18 @@ def crossover(env: Environment, pop: list[Individual], method: int, cfg: dict) -
             
             for layer_p1, layer_p2 in zip(p1.wnb, p2.wnb):
                 # crossover, we have different methods depending on the island
-                if method == 0:
+                if method[0] == 0:
                     weights, bias = snipcombine(layer_p1, layer_p2)
                 else:
                     weights, bias = blendcombine(layer_p1, layer_p2, cross_prop)
 
                 # mutation
-                weights = mutate(weights, cfg['mutation'])
-                bias = mutate(bias, cfg['mutation'])
+                if method[1] == 0:
+                    weights = mutate(weights, cfg['mutation'])
+                    bias = mutate(bias, cfg['mutation'])
+                else:
+                    weights = swap_mutation(weights, cfg['mutation'])
+                    bias = swap_mutation(bias, cfg['mutation'])
 
                 # limit between -1 and 1 using Tanh function
                 weights = np.clip(weights, cfg['dom_l'], cfg['dom_u'])
@@ -398,13 +502,19 @@ def doomsday(env: Environment, pop: list[Individual], cfg: dict) -> list[Individ
         list[Individual]: New population
     """
 
-    worst_indices = argsort(pop)[:len(pop) // 4] # A quarter of the individuals
-    best_individual = pop[argmax(pop)]
-    print("\n!!!NUKES INCOMING!!!")
+    amount_worst = int(len(pop) * 0.75)
+    # Use pareto front sorting to get the worst individuals
+    worst_indices = argsort(pop, key=lambda x: (x.front, -x.crowding_dist))
+    worst_indices = worst_indices[amount_worst:]
+    best_individual = min(pop, key=lambda x: (x.front, -x.crowding_dist))
 
-    assert argmax(pop) not in worst_indices, "Best individual is also one of the worst"
+    # best_individual = copy.copy(max(pop, key=lambda x: x.fitness))
+    # print(f"Best individual before doomsday: {best_individual}")
+    # print("\n!!!NUKES INCOMING!!!")
+
+    # assert argmax(pop, key=lambda x: x.fitness) not in worst_indices, "Best individual is also one of the worst"
     # Assert size of worst_indices > 1
-    assert len(worst_indices) > 1, "Worst indices is too small"
+    # assert len(worst_indices) > 1, "Worst indices is too small"
 
     # Nuke the hell out of the worst, make them mutate like crazy
     for idx in worst_indices:
@@ -420,6 +530,11 @@ def doomsday(env: Environment, pop: list[Individual], cfg: dict) -> list[Individ
 
         pop[idx].setWeights(wnb)
         pop[idx].evaluate(env)
+
+    best = max(pop, key=lambda x: x.fitness)
+    print(f"Best individual after doomsday: {best}")
+
+    assert max(pop, key=lambda x: x.fitness) >= best_individual, "Best individual is better than the best of the new population"
 
     return pop
 
@@ -456,13 +571,13 @@ def generate_new_pop(envs: list[Environment], npop: int, n_hidden_neurons: list[
         tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray, tuple[int, float, float], int]: Population, fitness values, best individual, mean and standard deviation of the fitness values, and the initial generation number
     """
     pop: list[Individual] = []
-    for _ in range(npop):
-        individual = Individual()
+    for i in range(npop):
+        individual = Individual(i)
         individual.intialiseWeights(n_hidden_neurons)
         individual.evaluate(envs[0])
         pop.append(individual)
 
-    best = int(argmax(pop))
+    best = int(argmax(pop, key=lambda x: x.fitness))
     mean = sum(pop) / float(len(pop))
     std = stdev(pop)
     ini_g = int(0)
@@ -521,21 +636,18 @@ def cross_species(species_pop: list[list[Individual]], cfg: dict) -> list[list[I
         list[list[Individual]]: New species population
     """
     prob = random.uniform(0,1)
+    
     if cfg['spec_cross'] >= prob:
         print("Crossing species")
-        for target in range(cfg['species']-1):
-            origin_island = (target + 1) % cfg['species']
-            origin_species = species_pop[origin_island]
-            target_species = species_pop[target]
-
-            best_origin_ind = argmax(origin_species)
-            best_target_ind = argmax(target_species)
-
-            # Swap best of the two species
-            species_pop[target][best_target_ind], species_pop[origin_island][best_origin_ind] = species_pop[origin_island][best_origin_ind], species_pop[target][best_target_ind]
-            
+        best_specs = [copy.copy(max(spec)) for spec in species_pop]
+        print(f"Best species: {best_specs}")
+        
+        for target_island in range(cfg['species']):
+            origin_island = (target_island + 1) % cfg['species']
+            print(f"Origin island: {origin_island} {best_specs[origin_island]}, Target island: {species_pop[target_island][argmax(species_pop[target_island])]}")
+            species_pop[target_island][argmax(species_pop[target_island])] = best_specs[origin_island]
+        print(f"Best species after crossing: {[max(spec) for spec in species_pop]}\n")
         return species_pop
-    
     return species_pop
 
 def train(envs: list[Environment], pop: list[Individual], best: int, ini_g: int, cfg: dict) -> None:
@@ -559,27 +671,27 @@ def train(envs: list[Environment], pop: list[Individual], best: int, ini_g: int,
     # Just extra keeping track of the best solution, as not to lose this
     best_individuals = []
     for specimen in species_pop:
-        best_index = argmax(specimen)
+        best_index = argmax(specimen, key=lambda x: x.fitness)
         best_individuals.append(pop[best_index])
 
     # Main training loop
     for g in range(ini_g+1, cfg['gens']):
         # Loop through all the islands and train them for one generation
+        print("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
+        print(f"Best individuals begin: {[max(spec) for spec in species_pop]}")
         for i, island_pop in enumerate(species_pop):
-            species_pop[i], spec_notimproved[i], best_individuals[i] = train_spec(envs[cur_env], island_pop, best_individuals[i], spec_notimproved[i], cfg['comb_meths'][i], cfg['scaletype'][i], cfg) # type: ignore
-
+            species_pop[i], spec_notimproved[i], best_individuals[i] = train_spec(envs[cur_env], island_pop, best_individuals[i], spec_notimproved[i], (cfg['comb_meths'][i], cfg['muttypes'][i]), cfg['scaletype'][i], cfg) # type: ignore
+        print(f"Best individuals mid  : {[max(spec) for spec in species_pop]}")
         # Make lists of the complete population to log the absolute best individual and other statistics
-        total_pop: list[Individual] = []
-        for spec_pop in species_pop:
-            total_pop += spec_pop.copy()
+        total_pop: list[Individual] = [p for spec in species_pop for p in spec]
 
         # Get statistics
-        best = argmax(total_pop)
-        std  = stdev(total_pop)
+        best = argmax(total_pop, key=lambda x: x.fitness)
+        std  = stdev(total_pop, key=lambda x: x.fitness)
         mean = sum(total_pop) / float(len(total_pop))
 
         # Memory for best solution
-        best_individual = total_pop[best]
+        best_individual = max(total_pop)
 
         # saves results
         save_txt(experiment_name+'/results.txt', '\n'+str(g)+' '+str(round(best_individual.fitness,6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
@@ -594,17 +706,20 @@ def train(envs: list[Environment], pop: list[Individual], best: int, ini_g: int,
 
         # saves simulation state
         env = envs[cur_env]
-        env.update_solutions(total_pop)
-        env.save_state()
+        # env.update_solutions(total_pop)
+        # env.save_state()
 
         species_pop = cross_species(species_pop, cfg)
-        cur_best = total_pop[best].fitness
+        cur_best = max(total_pop).fitness
         if cur_best <= last_best:
             no_improvement += 1
         else:
             last_best = cur_best
             no_improvement = 0
         
+        assert best_individual >= cur_best, f"Best individual {best_individual} is not the same as the best in the population {cur_best}. {max(total_pop)}"
+        assert best_individual in [p for spec in species_pop for p in spec], f"Best individual {best_individual} is not in the population"
+
         # Go to the next environment with more enemies if no improvement or high fitness
         if total_pop[best] > 90 or no_improvement >= 450:
             cur_env += 1
@@ -630,6 +745,8 @@ def train(envs: list[Environment], pop: list[Individual], best: int, ini_g: int,
             species_select = np.random.randint(0, len(species_pop))
             species_pop[species_select][argmin(species_pop[species_select])] = best_individual
 
+        print(f"Best individuals end  : {[max(spec) for spec in species_pop]}")
+
 
     fim = time.time() # prints total execution time for experiment
     print( '\nExecution time: '+str(round((fim-ini)/60))+' minutes \n')
@@ -644,7 +761,7 @@ def train_spec(env: Environment,
                pop: list[Individual],
                best_individual: Individual, 
                spec_notimproved: int, 
-               comb_meth: int, 
+               comb_meth: tuple[int,int], 
                scale_type: int,
                cfg: dict) -> tuple[list[Individual], float, Individual]:
     """Train/Evolution loop for the genetic algorithm, for one island of species
@@ -661,43 +778,34 @@ def train_spec(env: Environment,
     Returns:
         tuple[list[Individual], float, Individual]: Population, amount of generations the species has not improved, best individual in the population
     """
+    beginBest = copy.copy(max(pop))
+
+    # Pareto front sorting
+    fronts = non_dominant_sorting(pop)
+    for front in fronts:
+        crowding_distance_sorting(front)
 
     offspring = crossover(env, pop, comb_meth, cfg)  # crossover
     # Add offspring to the population
     pop = pop + offspring
-    
-    # Evaluate the new population
-    best = argmax(pop) #best solution in generation
-    
+    if max(pop) < beginBest:
+        print(f"Best individual worsened: {max(pop)} {beginBest}. Crossover")
+       
     # selection
-    pop_cp = pop.copy()
-    fit2scale = np.array(list(map(lambda x: x.fitness, pop_cp))) # Get list of fitnesses to scale
-
-    if scale_type == 1: # Defined in config file
-        fit_pop_norm = sigma_scaling(fit2scale, 2)
-    else:
-        fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit2scale), fit2scale))) # avoiding negative probabilities, as fitness is ranges from negative numbers
-
-    probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
-    # Chose indices corresponding to individuals in the population, randomly chosen according to their fitness
-    chosen = np.random.choice(len(pop), cfg['npop'] // cfg['species'] , p=probs, replace=False)
-    chosen = np.append(chosen[1:],best) # Just to be sure we don't lose the best individual
-
-    # Replace the population with the chosen individuals
-    pop2replace: list[Individual] = [pop[int(c)] for c in chosen]
-    pop = pop2replace
+    pop = selection(env, pop, scale_type, cfg)
+    if max(pop) < beginBest:
+        print(f"Best individual worsened: {max(pop)} {beginBest}. Selection")
 
     # searching new areas
-    best = argmax(pop) #best solution in generation
-    pop[best].evaluate(env) # repeats best eval, for stability issues
-    best_sol = pop[best]
+    best_sol = max(pop)
+    if max(pop) < beginBest:
+        print(f"Best individual worsened: {best_sol} {beginBest}. Evaluation")
 
     # Update so that the fitness of the stored best individual is still correct in the current environment
     if best_sol <= best_individual:
         spec_notimproved += 1
     else:
-        best = argmax(pop)
-        best_individual = pop[best]
+        best_individual = max(pop)
         spec_notimproved = 0
     
     if spec_notimproved >= cfg['doomsteps']:
@@ -705,13 +813,55 @@ def train_spec(env: Environment,
         # assert max(pop) == best_sol, f"Best fit {best_sol} not in population 3 {max(pop)}"
         pop = doomsday(env, pop, cfg)
         spec_notimproved = 0
-
+    if max(pop) < beginBest:
+        print(f"Best individual worsened: {max(pop)} {beginBest}. Doomsday")
     # Replace one in population with the best stored individual for this island
-    if best_individual > max(pop):
-        replace_index = argmin(pop)
-        pop[replace_index] = best_individual
+    # if best_individual > max(pop):
+    #     replace_index = argmin(pop)
+    #     pop[replace_index] = copy.copy(best_individual)
+
+    # Check if all id's are unique, if not, change them
+    ids = [p.id for p in pop]
+    if len(ids) != len(set(ids)):
+        for i, p in enumerate(pop):
+            p.id = i
             
     return pop, spec_notimproved, best_individual
+
+def selection(env: Environment, pop: list[Individual], scale_type: int, cfg: dict):
+    best = argmax(pop) #best solution in generation
+    pop_cp = pop.copy()
+    bestFits = []
+    for i in range(5):
+        pop[best].evaluate(env) # repeats best eval, for stability issues
+        bestFits.append(pop[best].fitness)
+    # Check if all in bestFits are the same
+    if all([f != bestFits[0] for f in bestFits]):
+        print(f"Best fitnesses are not the same: {bestFits}")
+    best = argmax(pop) #best solution in generation
+    fit2scale = np.array(list(map(lambda x: x.fitness, pop_cp))) # Get list of fitnesses to scale
+
+    if scale_type == 1: # Defined in config file
+        fit_pop_norm = sigma_scaling(fit2scale, 2)
+    elif scale_type == 0:
+        fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit2scale), fit2scale))) # avoiding negative probabilities, as fitness is ranges from negative numbers
+    elif scale_type == 2:
+        # Pareto scaling
+        # for p in pop_cp:
+            # print(p.front, p.crowding_dist)
+        chosen = argsort(pop_cp, key=lambda x: (x.front, -x.crowding_dist))[:cfg['npop'] // cfg['species']]
+
+    if scale_type in [0,1]:
+        probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
+        # Chose indices corresponding to individuals in the population, randomly chosen according to their fitness
+        chosen = np.random.choice(len(pop), cfg['npop'] // cfg['species'] , p=probs, replace=False)
+        chosen = np.append(chosen[1:],best) # Just to be sure we don't lose the best individual
+
+    # Replace the population with the chosen individuals
+    pop2replace: list[Individual] = [pop[int(c)] for c in chosen]
+    pop = pop2replace
+    assert len(pop) == cfg['npop'] // cfg['species'], f"Population size is not correct: {len(pop)}"
+    return pop
 
 
 #### UTILS ####
@@ -738,28 +888,30 @@ def print_dict(d: dict) -> None:
     for k, v in d.items():
         print(f'{k}: {v}')
 
-def stdev(list) -> float:
-    """Calculate the standard deviation of a list
+def stdev(lst, key=lambda x: x) -> float:
+    """Calculate the standard deviation of a list with a custom key function
 
     Args:
-        list (list): List of values
+        lst (list): List of values
+        key (function): Function to extract a comparison key from each element
 
     Returns:
         float: Standard deviation of the list
     """
-    mean = sum(list) / len(list)
-    variance = sum((x - mean) ** 2 for x in list) / len(list)
+    values = [key(x) for x in lst]
+    mean = sum(values) / len(values)
+    variance = sum((x - mean) ** 2 for x in values) / len(values)
     return sqrt(variance)
 
 # For explanation of arg functions look at the corresponding numpy versions (np.argmax etc.)
-def argmax(iterable): # from https://stackoverflow.com/questions/16945518/finding-the-index-of-the-value-which-is-the-min-or-max-in-python
-    return max(enumerate(iterable), key=lambda x: x[1])[0]
+def argmax(iterable, key=lambda x: x): # adapted from https://stackoverflow.com/questions/16945518/finding-the-index-of-the-value-which-is-the-min-or-max-in-python
+    return min(enumerate(iterable), key=lambda x: key(x[1]))[0]
 
-def argmin(iterable): # from https://stackoverflow.com/questions/16945518/finding-the-index-of-the-value-which-is-the-min-or-max-in-python
-    return min(enumerate(iterable), key=lambda x: x[1])[0]
+def argmin(iterable, key=lambda x: x):
+    return min(enumerate(iterable), key=lambda x: key(x[1]))[0]
 
-def argsort(seq): # http://stackoverflow.com/questions/3071415/efficient-method-to-calculate-the-rank-vector-of-a-list-in-python
-    return sorted(range(len(seq)), key=seq.__getitem__)
+def argsort(seq, key=lambda x: x): 
+    return sorted(range(len(seq)), key=lambda i: key(seq[i]))
 
 def save_weights(name: str, individual: list[tuple[np.ndarray, np.ndarray]]) -> None:
     file = gzip.open(name+'/best', 'wb', compresslevel = 5)
@@ -785,9 +937,11 @@ def main(envs: list[Environment], args: argparse.Namespace, cfg: dict) -> None:
     if args.run_mode =='test':
         file = gzip.open(args.experiment_name+'/best')
         bsol =  pickle.load(file, encoding='latin1')
+        ind = Individual()
+        ind.setWeights(bsol, force=True)
         print( '\n RUNNING SAVED BEST SOLUTION \n')
         env.update_parameter('speed','normal')
-        evaluate([bsol])
+        ind.evaluate(env)
         sys.exit(0)
 
 
@@ -806,25 +960,6 @@ def main(envs: list[Environment], args: argparse.Namespace, cfg: dict) -> None:
     print( '\n GENERATION '+str(ini_g)+' '+str(round(pop[best].fitness ,6))+' '+str(round(mean,6))+' '+str(round(std,6)))
 
     train(envs, pop, best, ini_g, cfg)
-
-def checksame(pop: tuple[list[list[tuple[np.ndarray, np.ndarray]]],list[list[tuple[np.ndarray, np.ndarray]]]], fit_pop: tuple[np.ndarray, np.ndarray], other_pop: tuple[np.ndarray,np.ndarray], cfg: dict) -> None:
-    """Check if the values in pop, fit_pop, and other_pop are the same
-
-    Args:
-        pop (tuple[list[list[tuple[np.ndarray, np.ndarray]]],list[list[tuple[np.ndarray, np.ndarray]]]]): Population formatted as a an array of models containing tuples of weights and biases.
-        fit_pop (tuple[np.ndarray, np.ndarray]): Array of fitness values for each individual in population, of shape (pop_size*1)
-        other_pop (tuple[np.ndarray,np.ndarray]): Other information about the individuals in the population in shape (player_energy, enemy_energy, timesteps)
-    """
-
-    pop1, pop2 = pop
-    fit1, fit2 = fit_pop
-    other1, other2 = other_pop
-
-    assert np.allclose(pop1, pop2), "Populations are not the same"
-    assert np.allclose(fit1, fit2), "Fitness values are not the same"
-    assert np.allclose(other1, other2), "Other information is not the same"
-
-    print("All checks passed")
 
 
 if __name__ == "__main__": # Basically just checks if the script is being run directly or imported as a module
@@ -867,19 +1002,19 @@ if __name__ == "__main__": # Basically just checks if the script is being run di
 
     # initializes simulation in individual evolution mode, for single static enemy.
     envs = []
-    enemies = [[5,6,7,8],[4,5,6,7,8],[3,4,5,6,7,8],[2,3,4,5,6,7,8],[1,2,3,4,5,6,7,8]]
-    for i in range(len(enemies)):
+    for i in range(len(cfg['enemies'])):
         if not os.path.exists(experiment_name+f'{i}'):
             os.makedirs(experiment_name+f'{i}')
         env = Environment(experiment_name=experiment_name+f'{i}',
-                        enemies=enemies[i],
-                        multiplemode= 'yes' if len(enemies[i]) > 1 else 'no',
+                        enemies=cfg['enemies'][i],
+                        multiplemode= 'yes' if len(cfg['enemies'][i]) > 1 else 'no',
                         playermode="ai",
                         player_controller=player_controller(cfg['archetecture']), # Initialise player with specified archetecture
                         enemymode="static",
                         level=2,
                         speed="fastest",
-                        visuals=False)
+                        visuals=False,
+                        clockprec='medium')
         env.state_to_log() # checks environment state
         envs.append(env)
 

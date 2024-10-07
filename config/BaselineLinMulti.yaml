@@ -6,9 +6,11 @@ dom_l: -1                          # Lower bound of the domain
 npop: 100                         # Number of population
 gens: 5000                         # Number of generations
 mutation: 0.2                     # Mutation rate
+muttypes: [0,1,0,1,0]             # Mutation types
 species: 5                        # Number of species
 spec_cross: 0.1                  # Species crossover rate
 comb_meths: [0,1,0,1,0]           # Combination methods
-scaletype: [1,1,1,1,1]            # Scaling type
+scaletype: [2,2,2,2,2]            # Scaling type
 doomsteps: 15                     # Number of doomsteps
 last_best: 0                      # Last best value
+enemies: [[1,2,3,4,5,6,7,8]]     # Enemies

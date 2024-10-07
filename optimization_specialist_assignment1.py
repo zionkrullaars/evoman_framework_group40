@@ -203,10 +203,11 @@ def swap_mutation(vals: np.ndarray, probability: float) -> np.ndarray:
     Returns:
         np.ndarray: Mutated weights or biases
     """
-    if np.random.uniform(0, 1) <= probability:
-        idx1, idx2 = np.random.choice(len(vals), size=2, replace=False)  # Randomly select two distinct indices
-        # Swap the values at the two indices
-        vals[idx1], vals[idx2] = vals[idx2], vals[idx1]
+    for i in range(0, len(vals) // 2):
+        if np.random.uniform(0, 1) <= probability:
+            idx1, idx2 = np.random.choice(range(len(vals)), size=2, replace=False)  # Randomly select two distinct indices
+            # Swap the values at the two indices
+            vals[idx1], vals[idx2] = vals[idx2], vals[idx1]
 
     return vals
 
