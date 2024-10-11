@@ -22,6 +22,7 @@ import gzip, pickle, yaml
 import argparse
 import wandb
 import statistics
+import itertools
 from nnlayers import tanh_activation, sigmoid_activation, softmax_activation
 from functools import total_ordering, reduce
 from operator import add
@@ -61,6 +62,8 @@ class Individual:
         self.dominates = set()
         self.dominated_by = 0
         self.id = id if id is not None else random.randint(0, 1000000)
+        self.ref_point = 0
+        self.ref_dist = 0.
 
     def intialiseWeights(self, n_hidden_neurons: list[int]) -> None:
         """
@@ -318,10 +321,10 @@ def tournament(pop: list[Individual], size: int = 2) -> Individual:
     """
     # Get two random values that correspond to two individuals in the population
     contestants = [pop[random.randint(0, len(pop)-1)] for _ in range(size)]
-    #print(len(contestants))
-    if contestants[0].front == contestants[1].front: # If the fronts are equal, return the individual with the highest crowding distance
-        return max([contestants[0], contestants[1]], key=lambda x: x.crowding_dist)
-    return max(contestants, key=lambda x: x.front) # Return the individual with the highest front
+
+    return min(contestants, key=lambda x: (x.front, -x.crowding_dist)) # Return the individual with the highest front
+
+##### NSGA-II functions #####
 
 def non_dominant_sorting(pop):
     # Initialize dominance sets
@@ -375,6 +378,81 @@ def crowding_distance_sorting(front: list[Individual]) -> list[Individual]:
             front[i].crowding_dist += front[i+1].fitness - front[i-1].fitness
 
     return front
+
+##### NSGA-III functions #####
+
+def make_reference_points(pop: list[Individual], grid_res: int) -> list[np.ndarray]:
+    """Create a grid of reference points NSGA-III style
+
+    Args:
+        pop (list[Individual]): Population of individuals
+        grid_res (int): Resolution of the grid
+
+    Returns:
+        list[np.ndarray]: List of reference points
+    """
+    num_objectives = len(pop[0].fitnessarray)
+    ref_points = []
+
+    # Create a grid of reference points, every intiger combination in the size (grid_res, num_objectives) is a point and normalised
+    for combination in itertools.combinations_with_replacement(range(grid_res+1), num_objectives):
+        if sum(combination) == grid_res:
+            point = np.array(combination) / grid_res
+            ref_points.append(point)
+    
+    return ref_points
+
+def associate_reference_points(pop: list[Individual], ref_points: list[np.ndarray]) -> None:
+    """Associate the reference points with the individuals
+
+    Args:
+        pop (list[Individual]): Population of individuals
+        ref_points (list[np.ndarray]): List of reference points
+    """
+    for ind in pop:
+        ind.ref_point = argmin(ref_points, key=lambda x: np.linalg.norm(np.array(ind.fitnessarray) - x))
+        ind.ref_dist = float(np.linalg.norm(np.array(ind.fitnessarray) - ref_points[ind.ref_point]))
+
+def niching_selection(fronts, ref_points, pop_size):
+    selected = []
+    for front in fronts:
+        if len(selected) + len(front) <= pop_size:
+            selected.extend(front)
+        else:
+            # Perform niching based on reference points
+            selected.extend(select_by_reference(front, ref_points, pop_size - len(selected)))
+            break
+    return selected
+
+def select_by_reference(pop: list[Individual], ref_points: list[np.ndarray], remaining_spots: int) -> list[Individual]:
+    """Apply niching to the population
+
+    Args:
+        pop (list[Individual]): Population of individuals
+        ref_points (list[np.ndarray]): List of reference points
+        remaining_spots (int): Amount of spots left in the population
+
+    Returns:
+        list[Individual]: New population selection
+    """
+    # print(len(pop))
+    associate_reference_points(pop, ref_points)
+    pop = copy.copy(pop)
+    selected = []
+    # Select the best individuals for each reference point
+    while len(selected) < remaining_spots:
+        for ref in range(len(ref_points)):
+            individuals = [ind for ind in pop if ind.ref_point == ref]
+            if individuals:
+                chosen = min(individuals, key=lambda x: (x.ref_dist, -x.crowding_dist))
+                selected.append(chosen)
+                pop.remove(chosen)
+            if len(selected) >= remaining_spots:
+                break
+
+    return selected
+
+##### Rest of the owl #####
 
 def mutate(vals: np.ndarray, probability: float) -> np.ndarray:
     """Mutate the values of a layer
@@ -508,14 +586,6 @@ def doomsday(env: Environment, pop: list[Individual], cfg: dict) -> list[Individ
     worst_indices = worst_indices[amount_worst:]
     best_individual = min(pop, key=lambda x: (x.front, -x.crowding_dist))
 
-    # best_individual = copy.copy(max(pop, key=lambda x: x.fitness))
-    # print(f"Best individual before doomsday: {best_individual}")
-    # print("\n!!!NUKES INCOMING!!!")
-
-    # assert argmax(pop, key=lambda x: x.fitness) not in worst_indices, "Best individual is also one of the worst"
-    # Assert size of worst_indices > 1
-    # assert len(worst_indices) > 1, "Worst indices is too small"
-
     # Nuke the hell out of the worst, make them mutate like crazy
     for idx in worst_indices:
         wnb = []
@@ -530,11 +600,6 @@ def doomsday(env: Environment, pop: list[Individual], cfg: dict) -> list[Individ
 
         pop[idx].setWeights(wnb)
         pop[idx].evaluate(env)
-
-    best = max(pop, key=lambda x: x.fitness)
-    print(f"Best individual after doomsday: {best}")
-
-    assert max(pop, key=lambda x: x.fitness) >= best_individual, "Best individual is better than the best of the new population"
 
     return pop
 
@@ -666,6 +731,7 @@ def train(envs: list[Environment], pop: list[Individual], best: int, ini_g: int,
     cur_env = 0
 
     species_pop = make_species(pop, cfg)
+    species_ref_points = [make_reference_points(spec, cfg['grid_res'] + i) for i, spec in enumerate(species_pop)]
     spec_notimproved = [0]*cfg['species']
 
     # Just extra keeping track of the best solution, as not to lose this
@@ -680,7 +746,7 @@ def train(envs: list[Environment], pop: list[Individual], best: int, ini_g: int,
         print("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
         print(f"Best individuals begin: {[max(spec) for spec in species_pop]}")
         for i, island_pop in enumerate(species_pop):
-            species_pop[i], spec_notimproved[i], best_individuals[i] = train_spec(envs[cur_env], island_pop, best_individuals[i], spec_notimproved[i], (cfg['comb_meths'][i], cfg['muttypes'][i]), cfg['scaletype'][i], cfg) # type: ignore
+            species_pop[i], spec_notimproved[i], best_individuals[i] = train_spec(envs[cur_env], island_pop, best_individuals[i], spec_notimproved[i], (cfg['comb_meths'][i], cfg['muttypes'][i]), cfg['scaletype'][i], species_ref_points[i], cfg) # type: ignore
         print(f"Best individuals mid  : {[max(spec) for spec in species_pop]}")
         # Make lists of the complete population to log the absolute best individual and other statistics
         total_pop: list[Individual] = [p for spec in species_pop for p in spec]
@@ -721,29 +787,29 @@ def train(envs: list[Environment], pop: list[Individual], best: int, ini_g: int,
         assert best_individual in [p for spec in species_pop for p in spec], f"Best individual {best_individual} is not in the population"
 
         # Go to the next environment with more enemies if no improvement or high fitness
-        if total_pop[best] > 90 or no_improvement >= 450:
-            cur_env += 1
-            cur_env = min(cur_env, len(envs)-1) # Make sure we don't go out of bounds with the environments
+        # if total_pop[best] > 90 or no_improvement >= 450:
+        #     cur_env += 1
+        #     cur_env = min(cur_env, len(envs)-1) # Make sure we don't go out of bounds with the environments
 
-            # Re-evaluate the population in the new environment
-            for best_ind in best_individuals:
-                best_ind.evaluate(envs[cur_env])
+        #     # Re-evaluate the population in the new environment
+        #     for best_ind in best_individuals:
+        #         best_ind.evaluate(envs[cur_env])
             
-            for spec in species_pop:
-                for p in spec:
-                    p.evaluate(envs[cur_env])
+        #     for spec in species_pop:
+        #         for p in spec:
+        #             p.evaluate(envs[cur_env])
 
-            no_improvement = 0
+        #     no_improvement = 0
 
         # Check if the best stored individual is still the best in the population (or one that's better)
-        appendbestind = True
-        for p in species_pop:
-            if p[argmax(p)] >= best_individual:
-                appendbestind = False
+        # appendbestind = True
+        # for p in species_pop:
+        #     if p[argmax(p)] >= best_individual:
+        #         appendbestind = False
 
-        if appendbestind:
-            species_select = np.random.randint(0, len(species_pop))
-            species_pop[species_select][argmin(species_pop[species_select])] = best_individual
+        # if appendbestind:
+        #     species_select = np.random.randint(0, len(species_pop))
+        #     species_pop[species_select][argmin(species_pop[species_select])] = best_individual
 
         print(f"Best individuals end  : {[max(spec) for spec in species_pop]}")
 
@@ -763,6 +829,7 @@ def train_spec(env: Environment,
                spec_notimproved: int, 
                comb_meth: tuple[int,int], 
                scale_type: int,
+               ref_points: list[np.ndarray],
                cfg: dict) -> tuple[list[Individual], float, Individual]:
     """Train/Evolution loop for the genetic algorithm, for one island of species
 
@@ -778,7 +845,7 @@ def train_spec(env: Environment,
     Returns:
         tuple[list[Individual], float, Individual]: Population, amount of generations the species has not improved, best individual in the population
     """
-    beginBest = copy.copy(max(pop))
+    # beginBest = copy.copy(max(pop))
 
     # Pareto front sorting
     fronts = non_dominant_sorting(pop)
@@ -788,24 +855,28 @@ def train_spec(env: Environment,
     offspring = crossover(env, pop, comb_meth, cfg)  # crossover
     # Add offspring to the population
     pop = pop + offspring
-    if max(pop) < beginBest:
-        print(f"Best individual worsened: {max(pop)} {beginBest}. Crossover")
-       
+    # if max(pop) < beginBest:
+        # print(f"Best individual worsened: {max(pop)} {beginBest}. Crossover")
+    
+    fronts = non_dominant_sorting(pop)
+    for front in fronts:
+        crowding_distance_sorting(front)
+
     # selection
-    pop = selection(env, pop, scale_type, cfg)
-    if max(pop) < beginBest:
-        print(f"Best individual worsened: {max(pop)} {beginBest}. Selection")
+    pop = selection(env, pop, scale_type, ref_points, cfg)
+    # if max(pop) < beginBest:
+        # print(f"Best individual worsened: {max(pop)} {beginBest}. Selection")
 
     # searching new areas
-    best_sol = max(pop)
-    if max(pop) < beginBest:
-        print(f"Best individual worsened: {best_sol} {beginBest}. Evaluation")
+    best_sol = min(pop, key=lambda x: (x.front, -x.crowding_dist))
+    # if max(pop) < beginBest:
+        # print(f"Best individual worsened: {best_sol} {beginBest}. Evaluation")
 
     # Update so that the fitness of the stored best individual is still correct in the current environment
     if best_sol <= best_individual:
         spec_notimproved += 1
     else:
-        best_individual = max(pop)
+        best_individual = min(pop, key=lambda x: (x.front, -x.crowding_dist))
         spec_notimproved = 0
     
     if spec_notimproved >= cfg['doomsteps']:
@@ -813,8 +884,8 @@ def train_spec(env: Environment,
         # assert max(pop) == best_sol, f"Best fit {best_sol} not in population 3 {max(pop)}"
         pop = doomsday(env, pop, cfg)
         spec_notimproved = 0
-    if max(pop) < beginBest:
-        print(f"Best individual worsened: {max(pop)} {beginBest}. Doomsday")
+    # if min(pop, key=lambda x: (x.front, -x.crowding_dist)) < beginBest:
+        # print(f"Best individual worsened: {max(pop)} {beginBest}. Doomsday")
     # Replace one in population with the best stored individual for this island
     # if best_individual > max(pop):
     #     replace_index = argmin(pop)
@@ -828,11 +899,11 @@ def train_spec(env: Environment,
             
     return pop, spec_notimproved, best_individual
 
-def selection(env: Environment, pop: list[Individual], scale_type: int, cfg: dict):
-    best = argmax(pop) #best solution in generation
+def selection(env: Environment, pop: list[Individual], scale_type: int, ref_points: list[np.ndarray], cfg: dict): # This got hella ugly and messy
+    best = argmin(pop, key=lambda x: (x.front, -x.crowding_dist)) #best solution in generation
     pop_cp = pop.copy()
     bestFits = []
-    for i in range(5):
+    for i in range(2):
         pop[best].evaluate(env) # repeats best eval, for stability issues
         bestFits.append(pop[best].fitness)
     # Check if all in bestFits are the same
@@ -846,10 +917,10 @@ def selection(env: Environment, pop: list[Individual], scale_type: int, cfg: dic
     elif scale_type == 0:
         fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit2scale), fit2scale))) # avoiding negative probabilities, as fitness is ranges from negative numbers
     elif scale_type == 2:
-        # Pareto scaling
-        # for p in pop_cp:
-            # print(p.front, p.crowding_dist)
         chosen = argsort(pop_cp, key=lambda x: (x.front, -x.crowding_dist))[:cfg['npop'] // cfg['species']]
+    elif scale_type == 3:
+        pop = niching_selection(non_dominant_sorting(pop_cp), ref_points, cfg['npop'] // cfg['species'])
+
 
     if scale_type in [0,1]:
         probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
@@ -858,8 +929,10 @@ def selection(env: Environment, pop: list[Individual], scale_type: int, cfg: dic
         chosen = np.append(chosen[1:],best) # Just to be sure we don't lose the best individual
 
     # Replace the population with the chosen individuals
-    pop2replace: list[Individual] = [pop[int(c)] for c in chosen]
-    pop = pop2replace
+    if scale_type in [0,1,2]:
+        pop2replace: list[Individual] = [pop[int(c)] for c in chosen]
+        pop = pop2replace
+
     assert len(pop) == cfg['npop'] // cfg['species'], f"Population size is not correct: {len(pop)}"
     return pop
 
