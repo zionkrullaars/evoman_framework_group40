@@ -1,7 +1,7 @@
 ###############################################################################
 # EvoMan FrameWork - V1.0 2016  			                                  #
-# DEMO : Neuroevolution - Genetic Algorithm  neural network.                  #
-# Author: Karine Miras        			                                      #
+# Competition : Neuroevolution - Genetic Algorithm  neural network.           #
+# Author: Karine Miras, Zion, Mert, Wouter, Zeng                              #
 # karine.smiras@gmail.com     				                                  #
 ###############################################################################
 
@@ -16,16 +16,13 @@ from optimization_specialist_assignment1 import sigma_scaling, swap_mutation
 import time
 import numpy as np
 import random
-from math import fabs,sqrt
-import glob, os
+from math import sqrt
+import os
 import gzip, pickle, yaml
 import argparse
 import wandb
-import statistics
 import itertools
-from nnlayers import tanh_activation, sigmoid_activation, softmax_activation
-from functools import total_ordering, reduce
-from operator import add
+from functools import total_ordering
 import copy
 
 VERBOSE = False
@@ -34,8 +31,8 @@ def verbose_print(*args, **kwargs):
     if VERBOSE:
         print(*args, **kwargs)
 
-np.random.seed(42)
-random.seed(42)
+# np.random.seed(42)
+# random.seed(42)
 
 @total_ordering
 class Individual:
@@ -51,7 +48,6 @@ class Individual:
         
         self.wnb: tuple[tuple[np.ndarray, np.ndarray], ...]
         self.fitness = fitness
-        self.fitnessalt = fitness
         self.front = 0
         self.crowding_dist = 0.
         self.player_energy = player_energy
@@ -109,7 +105,6 @@ class Individual:
         self.timesteps = t
         self.gain = g
         self.dead_enemies = de
-        # self.fitnessalt = 0.6*(100 - e) + 0.4*p - np.log(t)
 
     def check_domination(self, other: object):
         """Check if this individual dominates another individual
@@ -131,6 +126,28 @@ class Individual:
             return False
         else:
             return NotImplemented
+
+    def save_txt(self, file_name: str) -> None:
+        """Save the individual to a text file
+
+        Args:
+            file_name (str): Name of the file to save the individual to
+        """
+        try:
+            with open(file_name + 'score.txt', "r") as file:
+                data = file.readlines()
+                fitness = float(data[0])
+        except:
+            fitness = 0
+
+        if self.fitness >= fitness:
+            flatwnb: np.ndarray = np.concatenate([np.concatenate([np.concatenate([b.flatten(), w.flatten()]) for w, b in self.wnb])])
+
+            with open(file_name + '.txt', "w") as file:
+                file.write(str(flatwnb))
+
+            with open(file_name + 'score.txt', "w") as file:
+                file.write(str(self.fitness) + '\n' + str(self.dead_enemies) + '\n' + str(self.player_energy) + '\n' + str(self.enemy_energy) + '\n' + str(self.timesteps) + '\n' + str(self.gain))
 
     # Bunch of magic methods to make the Individual class work with the genetic algorithm (if you want to find out more, google function overloading)
     def __str__(self) -> str:
@@ -308,21 +325,6 @@ class Individual:
     def __int__(self) -> int:
         return int(self.fitness)
 
-# tournament
-def tournament(pop: list[Individual], size: int = 2) -> Individual:
-    """Tournament function to select the fittest of two individuals in the population
-
-    Args:
-        pop (list[Individual): Population of individuals
-        size (int, optional): Size of the tournament. Defaults to 2.
-
-    Returns:
-        list(tuple(weigths, bias)): One individual in the population
-    """
-    # Get two random values that correspond to two individuals in the population
-    contestants = [pop[random.randint(0, len(pop)-1)] for _ in range(size)]
-
-    return min(contestants, key=lambda x: (x.front, -x.crowding_dist)) # Return the individual with the highest front
 
 ##### NSGA-II functions #####
 
@@ -458,7 +460,61 @@ def select_by_reference(pop: list[Individual], selected: list[Individual], ref_p
         # print(len(selected), remaining_spots)
     return selected
 
-##### Rest of the owl #####
+def selection(env: Environment, pop: list[Individual], scale_type: int, ref_points: list[np.ndarray], cfg: dict): # This got hella ugly and messy
+    best = argmin(pop, key=lambda x: (x.front, -x.crowding_dist)) #best solution in generation
+    pop_cp = pop.copy()
+    bestFits = []
+    for i in range(1):
+        pop[best].evaluate(env) # repeats best eval, for stability issues
+        bestFits.append(pop[best].fitness)
+
+    # Check if all in bestFits are the same
+    if all([f != bestFits[0] for f in bestFits]):
+        print(f"Best fitnesses are not the same: {bestFits}")
+
+    best = argmax(pop) #best solution in generation
+    fit2scale = np.array(list(map(lambda x: x.fitness, pop_cp))) # Get list of fitnesses to scale
+
+    if scale_type == 1: # Defined in config file
+        fit_pop_norm = sigma_scaling(fit2scale, 2)
+    elif scale_type == 0:
+        fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit2scale), fit2scale))) # avoiding negative probabilities, as fitness is ranges from negative numbers
+    elif scale_type == 2:
+        chosen = argsort(pop_cp, key=lambda x: (x.front, -x.crowding_dist))[:cfg['npop'] // cfg['species']]
+    elif scale_type == 3:
+        return niching_selection(non_dominant_sorting(pop_cp), ref_points, cfg['npop'] // cfg['species'])
+
+
+    if scale_type in [0,1]:
+        probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
+        # Chose indices corresponding to individuals in the population, randomly chosen according to their fitness
+        chosen = np.random.choice(len(pop), cfg['npop'] // cfg['species'] , p=probs, replace=False)
+        chosen = np.append(chosen[1:],best) # Just to be sure we don't lose the best individual
+
+    # Replace the population with the chosen individuals
+    if scale_type in [0,1,2]:
+        pop2replace: list[Individual] = [pop[int(c)] for c in chosen]
+        pop = pop2replace
+
+    assert len(pop) == cfg['npop'] // cfg['species'], f"Population size is not correct: {len(pop)}"
+    return pop
+
+##### Cross-over #####
+
+def tournament(pop: list[Individual], size: int = 2) -> Individual:
+    """Tournament function to select the fittest of two individuals in the population
+
+    Args:
+        pop (list[Individual): Population of individuals
+        size (int, optional): Size of the tournament. Defaults to 2.
+
+    Returns:
+        list(tuple(weigths, bias)): One individual in the population
+    """
+    # Get two random values that correspond to two individuals in the population
+    contestants = [pop[random.randint(0, len(pop)-1)] for _ in range(size)]
+
+    return min(contestants, key=lambda x: (x.front, -x.crowding_dist)) # Return the individual with the highest front
 
 def mutate(vals: np.ndarray, probability: float) -> np.ndarray:
     """Mutate the values of a layer
@@ -473,8 +529,47 @@ def mutate(vals: np.ndarray, probability: float) -> np.ndarray:
 
     return vals
 
+def snipcombine(layer_p1: tuple[np.ndarray, np.ndarray], layer_p2: tuple[np.ndarray, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Combines two layers by randomly selecting crossover points for weights and biases.
+    This function takes two layers, each represented by a tuple of numpy arrays (weights and biases),
+    and combines them by selecting random crossover points for the weights and biases. The resulting
+    combined weights and biases are returned as a tuple.
 
-# crossover
+    Args:
+        layer_p1 (tuple[np.ndarray, np.ndarray]): The first layer's weights and biases.
+        layer_p2 (tuple[np.ndarray, np.ndarray]): The second layer's weights and biases.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: A tuple containing the combined weights and biases.
+    """
+
+    weightspoint = np.random.uniform(0,layer_p1[0].shape[0])
+    biaspoint = np.random.uniform(0,layer_p1[1].shape[0])
+    weights = np.concatenate((layer_p1[0][:int(weightspoint)], layer_p2[0][int(weightspoint):]))
+    bias = np.concatenate((layer_p1[1][:int(biaspoint)], layer_p2[1][int(biaspoint):]))
+    assert weights.shape == layer_p1[0].shape, "Weights shape does not match"
+    assert bias.shape == layer_p1[1].shape, "Biases shape does not match"
+    return weights,bias
+
+def blendcombine(layer_p1: tuple[np.ndarray, np.ndarray], layer_p2: tuple[np.ndarray, np.ndarray], cross_prob: float):
+    """
+    Combines two layers' weights and biases using a blend crossover method.
+    Args:
+        layer_p1 (tuple[np.ndarray, np.ndarray]): The first layer's weights and biases.
+        layer_p2 (tuple[np.ndarray, np.ndarray]): The second layer's weights and biases.
+        cross_prob (float): The crossover probability, determining the blend ratio.
+
+    Returns:
+        tuple: A tuple containing the combined weights and biases.
+    """
+
+    weights = layer_p1[0]*cross_prob+layer_p2[0]*(1-cross_prob)
+    bias = layer_p1[1]*cross_prob+layer_p2[1]*(1-cross_prob)
+    assert weights.shape == layer_p1[0].shape, "Weights shape does not match"
+    assert bias.shape == layer_p1[1].shape, "Biases shape does not match"
+    return weights, bias
+
 def crossover(env: Environment, pop: list[Individual], method: tuple[int, int], cfg: dict) -> list[Individual]:
     """
     Perform crossover and mutation on a population of individuals to generate offspring.
@@ -533,46 +628,7 @@ def crossover(env: Environment, pop: list[Individual], method: tuple[int, int], 
             offspring.append(child)
     return offspring
 
-def snipcombine(layer_p1: tuple[np.ndarray, np.ndarray], layer_p2: tuple[np.ndarray, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Combines two layers by randomly selecting crossover points for weights and biases.
-    This function takes two layers, each represented by a tuple of numpy arrays (weights and biases),
-    and combines them by selecting random crossover points for the weights and biases. The resulting
-    combined weights and biases are returned as a tuple.
-
-    Args:
-        layer_p1 (tuple[np.ndarray, np.ndarray]): The first layer's weights and biases.
-        layer_p2 (tuple[np.ndarray, np.ndarray]): The second layer's weights and biases.
-
-    Returns:
-        tuple[np.ndarray, np.ndarray]: A tuple containing the combined weights and biases.
-    """
-
-    weightspoint = np.random.uniform(0,layer_p1[0].shape[0])
-    biaspoint = np.random.uniform(0,layer_p1[1].shape[0])
-    weights = np.concatenate((layer_p1[0][:int(weightspoint)], layer_p2[0][int(weightspoint):]))
-    bias = np.concatenate((layer_p1[1][:int(biaspoint)], layer_p2[1][int(biaspoint):]))
-    assert weights.shape == layer_p1[0].shape, "Weights shape does not match"
-    assert bias.shape == layer_p1[1].shape, "Biases shape does not match"
-    return weights,bias
-
-def blendcombine(layer_p1: tuple[np.ndarray, np.ndarray], layer_p2: tuple[np.ndarray, np.ndarray], cross_prob: float):
-    """
-    Combines two layers' weights and biases using a blend crossover method.
-    Args:
-        layer_p1 (tuple[np.ndarray, np.ndarray]): The first layer's weights and biases.
-        layer_p2 (tuple[np.ndarray, np.ndarray]): The second layer's weights and biases.
-        cross_prob (float): The crossover probability, determining the blend ratio.
-
-    Returns:
-        tuple: A tuple containing the combined weights and biases.
-    """
-
-    weights = layer_p1[0]*cross_prob+layer_p2[0]*(1-cross_prob)
-    bias = layer_p1[1]*cross_prob+layer_p2[1]*(1-cross_prob)
-    assert weights.shape == layer_p1[0].shape, "Weights shape does not match"
-    assert bias.shape == layer_p1[1].shape, "Biases shape does not match"
-    return weights, bias
+##### Extra functions #####
 
 def doomsday(env: Environment, pop: list[Individual], cfg: dict) -> list[Individual]:
     """Kills the worst genomes, and replace with new best/random solutions
@@ -655,30 +711,6 @@ def generate_new_pop(envs: list[Environment], npop: int, n_hidden_neurons: list[
     envs[0].update_solutions(pop)
     return pop, (best, mean, std), ini_g
 
-# def load_pop(env: Environment, experiment_name: str) -> tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray, tuple[int, float, float], int]:
-#     """Load a population from a previous experiment
-
-#     Args:
-#         env (Environment): Environment object for the evoman framework
-#         experiment_name (str): Name of the experiment
-
-#     Returns:
-#         tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray, tuple[int, float, float], int]: Population, fitness values, best individual, mean and standard deviation of the fitness values, and the initial generation number
-#     """
-#     env.load_state()
-#     pop = env.solutions[0]
-#     fit_pop = env.solutions[1]
-
-#     best = int(np.argmax(fit_pop))
-#     mean = float(np.mean(fit_pop))
-#     std = float(np.std(fit_pop))
-
-#     # finds last generation number
-#     file_aux  = open(experiment_name+'/gen.txt','r')
-#     ini_g = int(file_aux.readline())
-#     file_aux.close()
-#     return pop, fit_pop, (best, mean, std), ini_g
-
 def make_species(pop: list[Individual], cfg: dict) -> list[list[Individual]]:
     """Split the population into species
 
@@ -721,6 +753,10 @@ def cross_species(species_pop: list[list[Individual]], cfg: dict) -> list[list[I
         return species_pop
     return species_pop
 
+
+##### Main training loops #####
+
+
 def train(envs: list[Environment], pop: list[Individual], best: int, ini_g: int, cfg: dict) -> None:
     """Train/Evolution loop for the genetic algorithm
 
@@ -750,10 +786,9 @@ def train(envs: list[Environment], pop: list[Individual], best: int, ini_g: int,
     for g in range(ini_g+1, cfg['gens']):
         # Loop through all the islands and train them for one generation
         print("\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n")
-        print(f"Best individuals begin: {[max(spec) for spec in species_pop]}")
         for i, island_pop in enumerate(species_pop):
             species_pop[i], spec_notimproved[i], best_individuals[i] = train_spec(envs[cur_env], island_pop, best_individuals[i], spec_notimproved[i], (cfg['comb_meths'][i], cfg['muttypes'][i]), cfg['scaletype'][i], species_ref_points[i], cfg) # type: ignore
-        print(f"Best individuals mid  : {[max(spec) for spec in species_pop]}")
+
         # Make lists of the complete population to log the absolute best individual and other statistics
         total_pop: list[Individual] = [p for spec in species_pop for p in spec]
 
@@ -766,20 +801,19 @@ def train(envs: list[Environment], pop: list[Individual], best: int, ini_g: int,
         best_individual = max(total_pop)
 
         # saves results
-        save_txt(args.experiment_name+'/results.txt', '\n'+str(g)+' '+str(round(best_individual.fitness,6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
+        save_txt(envs[0].experiment_name+'/results.txt', '\n'+str(g)+' '+str(round(best_individual.fitness,6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
         print( '\n GENERATION '+str(g)+' '+str(round(best_individual.fitness,6))+' '+str(round(mean,6))+' '+str(round(std,6)))
         wandb.log({'Generation': ini_g, 'Best Fitness': best_individual.fitness, 'Mean Fitness': mean, 'Std Fitness': std, 'Best Player Health': best_individual.player_energy, 'Best Enemy Health': best_individual.enemy_energy, 'Best Timesteps': best_individual.timesteps,'Gain': best_individual.gain, 'Best Dead Enemies': best_individual.dead_enemies, 'Current Env': cur_env})
 
         # saves generation number
-        save_txt(args.experiment_name+'/gen.txt', str(i))
+        save_txt(envs[0].experiment_name+'/gen.txt', str(i))
 
         # saves file with the best solution
-        save_weights(args.experiment_name, best_individual.wnb)
+        save_weights(envs[0].experiment_name, best_individual.wnb)
+        best_individual.save_txt(envs[0].experiment_name+'/bestFit.txt')
 
         # saves simulation state
         env = envs[cur_env]
-        # env.update_solutions(total_pop)
-        # env.save_state()
 
         species_pop = cross_species(species_pop, cfg)
         cur_best = max(total_pop).fitness
@@ -788,43 +822,13 @@ def train(envs: list[Environment], pop: list[Individual], best: int, ini_g: int,
         else:
             last_best = cur_best
             no_improvement = 0
-        
-        assert best_individual >= cur_best, f"Best individual {best_individual} is not the same as the best in the population {cur_best}. {max(total_pop)}"
-        assert best_individual in [p for spec in species_pop for p in spec], f"Best individual {best_individual} is not in the population"
-
-        # Go to the next environment with more enemies if no improvement or high fitness
-        # if total_pop[best] > 90 or no_improvement >= 450:
-        #     cur_env += 1
-        #     cur_env = min(cur_env, len(envs)-1) # Make sure we don't go out of bounds with the environments
-
-        #     # Re-evaluate the population in the new environment
-        #     for best_ind in best_individuals:
-        #         best_ind.evaluate(envs[cur_env])
-            
-        #     for spec in species_pop:
-        #         for p in spec:
-        #             p.evaluate(envs[cur_env])
-
-        #     no_improvement = 0
-
-        # Check if the best stored individual is still the best in the population (or one that's better)
-        # appendbestind = True
-        # for p in species_pop:
-        #     if p[argmax(p)] >= best_individual:
-        #         appendbestind = False
-
-        # if appendbestind:
-        #     species_select = np.random.randint(0, len(species_pop))
-        #     species_pop[species_select][argmin(species_pop[species_select])] = best_individual
-
-        print(f"Best individuals end  : {[max(spec) for spec in species_pop]}")
 
 
     fim = time.time() # prints total execution time for experiment
     print( '\nExecution time: '+str(round((fim-ini)/60))+' minutes \n')
     print( '\nExecution time: '+str(round((fim-ini)))+' seconds \n')
 
-    file = open(args.experiment_name+'/neuroended', 'w')  # saves control (simulation has ended) file for bash loop file
+    file = open(envs[0].experiment_name+'/neuroended', 'w')  # saves control (simulation has ended) file for bash loop file
     file.close()
 
     env.state_to_log() 
@@ -851,9 +855,7 @@ def train_spec(env: Environment,
     Returns:
         tuple[list[Individual], float, Individual]: Population, amount of generations the species has not improved, best individual in the population
     """
-    # beginBest = copy.copy(max(pop))
-
-    # Pareto front sorting
+    # Pareto front sorting, needed for tournament in crossover
     fronts = non_dominant_sorting(pop)
     for front in fronts:
         crowding_distance_sorting(front)
@@ -861,22 +863,17 @@ def train_spec(env: Environment,
     offspring = crossover(env, pop, comb_meth, cfg)  # crossover
     # Add offspring to the population
     pop = pop + offspring
-    # if max(pop) < beginBest:
-        # print(f"Best individual worsened: {max(pop)} {beginBest}. Crossover")
     
+    # Sorting after crossover
     fronts = non_dominant_sorting(pop)
     for front in fronts:
         crowding_distance_sorting(front)
 
     # selection
     pop = selection(env, pop, scale_type, ref_points, cfg)
-    # if max(pop) < beginBest:
-        # print(f"Best individual worsened: {max(pop)} {beginBest}. Selection")
 
     # searching new areas
     best_sol = min(pop, key=lambda x: (x.front, -x.crowding_dist))
-    # if max(pop) < beginBest:
-        # print(f"Best individual worsened: {best_sol} {beginBest}. Evaluation")
 
     # Update so that the fitness of the stored best individual is still correct in the current environment
     if best_sol <= best_individual:
@@ -887,16 +884,8 @@ def train_spec(env: Environment,
     
     if spec_notimproved >= cfg['doomsteps']:
         save_txt(args.experiment_name+'/results.txt', '\ndoomsday', 'a')
-        # assert max(pop) == best_sol, f"Best fit {best_sol} not in population 3 {max(pop)}"
         pop = doomsday(env, pop, cfg)
         spec_notimproved = 0
-
-    # if min(pop, key=lambda x: (x.front, -x.crowding_dist)) < beginBest:
-        # print(f"Best individual worsened: {max(pop)} {beginBest}. Doomsday")
-    # Replace one in population with the best stored individual for this island
-    # if best_individual > max(pop):
-    #     replace_index = argmin(pop)
-    #     pop[replace_index] = copy.copy(best_individual)
 
     # Check if all id's are unique, if not, change them
     ids = [p.id for p in pop]
@@ -906,49 +895,20 @@ def train_spec(env: Environment,
             
     return pop, spec_notimproved, best_individual
 
-def selection(env: Environment, pop: list[Individual], scale_type: int, ref_points: list[np.ndarray], cfg: dict): # This got hella ugly and messy
-    best = argmin(pop, key=lambda x: (x.front, -x.crowding_dist)) #best solution in generation
-    pop_cp = pop.copy()
-    bestFits = []
-    for i in range(1):
-        pop[best].evaluate(env) # repeats best eval, for stability issues
-        bestFits.append(pop[best].fitness)
-    # Check if all in bestFits are the same
-    if all([f != bestFits[0] for f in bestFits]):
-        print(f"Best fitnesses are not the same: {bestFits}")
-    best = argmax(pop) #best solution in generation
-    fit2scale = np.array(list(map(lambda x: x.fitness, pop_cp))) # Get list of fitnesses to scale
-
-    if scale_type == 1: # Defined in config file
-        fit_pop_norm = sigma_scaling(fit2scale, 2)
-    elif scale_type == 0:
-        fit_pop_norm =  np.array(list(map(lambda y: norm(y,fit2scale), fit2scale))) # avoiding negative probabilities, as fitness is ranges from negative numbers
-    elif scale_type == 2:
-        chosen = argsort(pop_cp, key=lambda x: (x.front, -x.crowding_dist))[:cfg['npop'] // cfg['species']]
-    elif scale_type == 3:
-        pop = niching_selection(non_dominant_sorting(pop_cp), ref_points, cfg['npop'] // cfg['species'])
-
-
-    if scale_type in [0,1]:
-        probs = (fit_pop_norm)/(fit_pop_norm).sum() # normalize fitness values to probabilities
-        # Chose indices corresponding to individuals in the population, randomly chosen according to their fitness
-        chosen = np.random.choice(len(pop), cfg['npop'] // cfg['species'] , p=probs, replace=False)
-        chosen = np.append(chosen[1:],best) # Just to be sure we don't lose the best individual
-
-    # Replace the population with the chosen individuals
-    if scale_type in [0,1,2]:
-        pop2replace: list[Individual] = [pop[int(c)] for c in chosen]
-        pop = pop2replace
-
-    assert len(pop) == cfg['npop'] // cfg['species'], f"Population size is not correct: {len(pop)}"
-    return pop
-
-
 #### UTILS ####
-
-
-# normalizes
 def norm(x, pfit_pop):
+    """
+    Normalizes a value `x` based on the population fitness values `pfit_pop`.
+    The normalization is performed using the formula:
+    (x - min(pfit_pop)) / (max(pfit_pop) - min(pfit_pop))
+    If the range (max - min) is zero, the normalized value is set to 0.
+    If the normalized value is less than or equal to 0, it is set to a small positive value (1e-10).
+    Args:
+        x (float): The value to be normalized.
+        pfit_pop (list of float): The population fitness values used for normalization.
+    Returns:
+        float: The normalized value of `x`.
+    """
     
     if ( max(pfit_pop) - min(pfit_pop) ) > 0:
         x_norm = ( x - min(pfit_pop) )/( max(pfit_pop) - min(pfit_pop) )
@@ -1018,7 +978,7 @@ def main(envs: list[Environment], args: argparse.Namespace, cfg: dict) -> None:
     print_dict(cfg)
     # loads file with the best solution for testing
     if args.run_mode =='test':
-        file = gzip.open(args.experiment_name+'/best')
+        file = gzip.open(envs[0].experiment_name+'/best')
         bsol =  pickle.load(file, encoding='latin1')
         ind = Individual()
         ind.setWeights(bsol, force=True)
@@ -1029,7 +989,7 @@ def main(envs: list[Environment], args: argparse.Namespace, cfg: dict) -> None:
 
 
     # initializes population loading old solutions or generating new ones
-    if not os.path.exists(args.experiment_name+'/evoman_solstate') or args.new_evolution:
+    if not os.path.exists(envs[0].experiment_name+'/evoman_solstate') or args.new_evolution:
         print( '\nNEW EVOLUTION\n')
         pop, fit_pop_stats, ini_g = generate_new_pop(envs, cfg['npop'], cfg['archetecture'])
 
@@ -1039,13 +999,13 @@ def main(envs: list[Environment], args: argparse.Namespace, cfg: dict) -> None:
 
     # saves results for first pop
     best, mean, std = fit_pop_stats
-    save_txt(args.experiment_name+'/results.txt', '\n\ngen best mean std' + '\n'+str(ini_g)+' '+str(round(pop[best].fitness,6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
+    save_txt(envs[0].experiment_name+'/results.txt', '\n\ngen best mean std' + '\n'+str(ini_g)+' '+str(round(pop[best].fitness,6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
     print( '\n GENERATION '+str(ini_g)+' '+str(round(pop[best].fitness ,6))+' '+str(round(mean,6))+' '+str(round(std,6)))
 
     train(envs, pop, best, ini_g, cfg)
 
 def startSweep() -> None:
-    
+    # Function for Wandb hyperparameter sweep
     wandb.init(
         # set the wandb project where this run will be logged
         project="Evoman Competition Sweep",
@@ -1100,6 +1060,8 @@ if __name__ == "__main__": # Basically just checks if the script is being run di
     parser.add_argument('--run_mode', type=str, default='train', help='Run mode for the genetic algorithm')
     parser.add_argument('--wandb', action='store_true', help='Use Weights and Biases for logging')
     parser.add_argument('--sweep', action='store_true', help='Use Weights and Biases for sweeping')
+    parser.add_argument('--number', type=int, default=0, help='Number of the experiment')
+    parser.add_argument('--enemies', type=str, default='1,2,3,4,5,6,7,8', help='List of enemies to train against')
     args = parser.parse_args()
 
     # Loading our training config
@@ -1113,12 +1075,13 @@ if __name__ == "__main__": # Basically just checks if the script is being run di
 
     else:
         # Initialize Weights and Biases
+        experiment_name = args.experiment_name + 'Species' + str(args.number)
         wandb.init(
             # set the wandb project where this run will be logged
             project="Evoman Task 2",
 
             # track hyperparameters and run metadata
-            name=args.experiment_name + 'Species' + '3',
+            name=experiment_name,
             config=cfg
         )
 
@@ -1128,28 +1091,28 @@ if __name__ == "__main__": # Basically just checks if the script is being run di
             os.environ["SDL_VIDEODRIVER"] = "dummy" # Turn off videodriver when running headless
 
         # Create a folder to store the experiment
-        experiment_name = args.experiment_name
+        
         if not os.path.exists(experiment_name):
             os.makedirs(experiment_name)
 
         # initializes simulation in individual evolution mode, for single static enemy.
+        enemies = [int(e) for e in args.enemies.split(',')]
         envs = []
-        for i in range(len(cfg['enemies'])):
-            if not os.path.exists(experiment_name+f'{i}'):
-                os.makedirs(experiment_name+f'{i}')
-            env = Environment(experiment_name=experiment_name+f'{i}',
-                            enemies=cfg['enemies'][i],
-                            multiplemode= 'yes' if len(cfg['enemies'][i]) > 1 else 'no',
-                            playermode="ai",
-                            player_controller=player_controller(cfg['archetecture']), # Initialise player with specified archetecture
-                            enemymode="static",
-                            level=2,
-                            speed="fastest",
-                            visuals=False,
-                            clockprec='medium')
-            env.state_to_log() # checks environment state
-            envs.append(env)
 
+        if not os.path.exists(experiment_name):
+            os.makedirs(experiment_name)
+        env = Environment(experiment_name=experiment_name,
+                        enemies=enemies,
+                        multiplemode= 'yes' if len(enemies) > 1 else 'no',
+                        playermode="ai",
+                        player_controller=player_controller(cfg['archetecture']), # Initialise player with specified archetecture
+                        enemymode="static",
+                        level=2,
+                        speed="fastest",
+                        visuals=False,
+                        clockprec='medium')
+        env.state_to_log() # checks environment state
+        envs.append(env)
 
         ####   Optimization for controller solution (best genotype-weights for phenotype-network): Ganetic Algorihm    ###
         ini = time.time()  # sets time marker
