@@ -9,7 +9,7 @@ archetecture: [10,5]           # Number of neurons in each layer
 dom_u: 1                          # Upper bound of the domain
 dom_l: -1                          # Lower bound of the domain
 npop: 100                         # Number of population
-gens: 2000                         # Number of generations
+gens: 1000                         # Number of generations
 species: 5                        # Number of species
 scaletype: [2,2,2,2,2]            # Scaling type
 last_best: 0                      # Last best value

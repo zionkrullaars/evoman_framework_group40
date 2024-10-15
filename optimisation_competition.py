@@ -993,10 +993,6 @@ def main(envs: list[Environment], args: argparse.Namespace, cfg: dict) -> None:
         print( '\nNEW EVOLUTION\n')
         pop, fit_pop_stats, ini_g = generate_new_pop(envs, cfg['npop'], cfg['archetecture'])
 
-    # else:
-    #     print( '\nCONTINUING EVOLUTION\n')
-    #     pop, fit_pop, fit_pop_stats, ini_g = load_pop(env, args.experiment_name)
-
     # saves results for first pop
     best, mean, std = fit_pop_stats
     save_txt(envs[0].experiment_name+'/results.txt', '\n\ngen best mean std' + '\n'+str(ini_g)+' '+str(round(pop[best].fitness,6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
@@ -1009,6 +1005,7 @@ def startSweep() -> None:
     wandb.init(
         # set the wandb project where this run will be logged
         project="Evoman Competition Sweep",
+        entity="EvomanTask2",
 
         # track hyperparameters and run metadata
         name=args.experiment_name
