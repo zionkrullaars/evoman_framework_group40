@@ -1,17 +1,17 @@
-experiment_name: 'dummy'          # Name of the experiment
+
+mutation: 0.1033      # Mutation rate
+spec_cross: 0.2208                 # Species crossover rate
+doomsteps: 30                     # Number of doomsteps
+comb_meths: [1,0,1,1,0]        # Combination methods
+muttypes: [1, 1, 1, 1, 1]         # Combination methods
+experiment_name: 'dummy'        # Name of the experiment
 archetecture: [10,5]           # Number of neurons in each layer
-activation: ['relu','relu','sig'] # Activation function for each layer
 dom_u: 1                          # Upper bound of the domain
 dom_l: -1                          # Lower bound of the domain
 npop: 100                         # Number of population
-gens: 5000                         # Number of generations
-mutation: 0.1                     # Mutation rate
-muttypes: [0,1,0,1,0]             # Mutation types
+gens: 2000                         # Number of generations
 species: 5                        # Number of species
-spec_cross: 0.1                  # Species crossover rate
-comb_meths: [0,1,0,1,0]           # Combination methods
 scaletype: [2,2,2,2,2]            # Scaling type
-doomsteps: 15                     # Number of doomsteps
 last_best: 0                      # Last best value
-grid_res: 10                     # Grid resolution
+grid_res: 14                     # Grid resolution
 enemies: [[1,2,3,4,5,6,7,8]]     # Enemies

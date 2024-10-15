@@ -1,0 +1,47 @@
+
+method: 'bayes'
+metric:
+  name: 'Fitness'                   # Name of the algorithm
+  goal: 'minimize'
+
+parameters:
+  mutation:                      # Mutation rate
+    min: 0.05
+    max: 0.3
+  spec_cross:                  # Species crossover rate
+    min: 0.01
+    max: 0.3
+  doomsteps:                     # Number of doomsteps
+    values: [10,20,30,40,50]
+  comb_meths:
+    values: [[0,1,0,1,0], 
+             [1,1,1,1,1],
+             [0,0,0,0,0],
+             [1,0,1,1,0]]           # Combination methods
+  muttypes:
+    values: [[0,1,0,1,0], 
+             [1,1,1,1,1],
+             [0,0,0,0,0],
+             [1,0,1,1,0]]           # Combination methods
+  experiment_name: 
+    value: 'dummy'          # Name of the experiment
+  archetecture: 
+    value: [10,5]           # Number of neurons in each layer
+  dom_u: 
+    value: 1                          # Upper bound of the domain
+  dom_l: 
+    value: -1                          # Lower bound of the domain
+  npop: 
+    value: 100                         # Number of population
+  gens: 
+    value: 2000                         # Number of generations
+  species: 
+    value: 5                        # Number of species
+  scaletype: 
+    value: [3,3,3,3,3]            # Scaling type
+  last_best: 
+    value: 0                      # Last best value
+  grid_res: 
+    value: 10                     # Grid resolution
+  enemies: 
+    value: [[1,2,3,4,5,6,7,8]]     # Enemies

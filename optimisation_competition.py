@@ -415,16 +415,16 @@ def associate_reference_points(pop: list[Individual], ref_points: list[np.ndarra
 
 def niching_selection(fronts, ref_points, pop_size):
     selected = []
-    for front in fronts:
+    for f, front in enumerate(fronts):
         if len(selected) + len(front) <= pop_size:
             selected.extend(front)
         else:
             # Perform niching based on reference points
-            selected.extend(select_by_reference(front, ref_points, pop_size - len(selected)))
+            selected.extend(select_by_reference(front, copy.copy(selected), ref_points, pop_size - len(selected)))
             break
     return selected
 
-def select_by_reference(pop: list[Individual], ref_points: list[np.ndarray], remaining_spots: int) -> list[Individual]:
+def select_by_reference(pop: list[Individual], selected: list[Individual], ref_points: list[np.ndarray], remaining_spots: int) -> list[Individual]:
     """Apply niching to the population
 
     Args:
@@ -438,18 +438,24 @@ def select_by_reference(pop: list[Individual], ref_points: list[np.ndarray], rem
     # print(len(pop))
     associate_reference_points(pop, ref_points)
     pop = copy.copy(pop)
+    niche_counts = [sum([1 for ind in selected if ind.ref_point == ref]) for ref in range(len(ref_points))] # Total of individuals in each niche
     selected = []
     # Select the best individuals for each reference point
     while len(selected) < remaining_spots:
-        for ref in range(len(ref_points)):
-            individuals = [ind for ind in pop if ind.ref_point == ref]
-            if individuals:
-                chosen = min(individuals, key=lambda x: (x.ref_dist, -x.crowding_dist))
+        lowest_niche = argmin(niche_counts) # Find the niche with the lowest amount of individuals
+        lowest_niches = [n for n in range(len(niche_counts)) if n == lowest_niche]
+        lowest_niches_individuals: list[list[Individual]] = [[ind for ind in pop if ind.ref_point == ref] for ref in lowest_niches]
+        for nicheInd, niche in zip(lowest_niches, lowest_niches_individuals):
+            if niche:
+                chosen = min(niche, key=lambda x: (x.ref_dist, -x.crowding_dist))
                 selected.append(chosen)
+                niche_counts[nicheInd] += 1
                 pop.remove(chosen)
+            else:
+                niche_counts[nicheInd] = float('inf')
             if len(selected) >= remaining_spots:
                 break
-
+        # print(len(selected), remaining_spots)
     return selected
 
 ##### Rest of the owl #####
@@ -646,7 +652,7 @@ def generate_new_pop(envs: list[Environment], npop: int, n_hidden_neurons: list[
     mean = sum(pop) / float(len(pop))
     std = stdev(pop)
     ini_g = int(0)
-    env.update_solutions(pop)
+    envs[0].update_solutions(pop)
     return pop, (best, mean, std), ini_g
 
 # def load_pop(env: Environment, experiment_name: str) -> tuple[list[tuple[np.ndarray, np.ndarray]], np.ndarray, tuple[int, float, float], int]:
@@ -760,15 +766,15 @@ def train(envs: list[Environment], pop: list[Individual], best: int, ini_g: int,
         best_individual = max(total_pop)
 
         # saves results
-        save_txt(experiment_name+'/results.txt', '\n'+str(g)+' '+str(round(best_individual.fitness,6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
+        save_txt(args.experiment_name+'/results.txt', '\n'+str(g)+' '+str(round(best_individual.fitness,6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
         print( '\n GENERATION '+str(g)+' '+str(round(best_individual.fitness,6))+' '+str(round(mean,6))+' '+str(round(std,6)))
         wandb.log({'Generation': ini_g, 'Best Fitness': best_individual.fitness, 'Mean Fitness': mean, 'Std Fitness': std, 'Best Player Health': best_individual.player_energy, 'Best Enemy Health': best_individual.enemy_energy, 'Best Timesteps': best_individual.timesteps,'Gain': best_individual.gain, 'Best Dead Enemies': best_individual.dead_enemies, 'Current Env': cur_env})
 
         # saves generation number
-        save_txt(experiment_name+'/gen.txt', str(i))
+        save_txt(args.experiment_name+'/gen.txt', str(i))
 
         # saves file with the best solution
-        save_weights(experiment_name, best_individual.wnb)
+        save_weights(args.experiment_name, best_individual.wnb)
 
         # saves simulation state
         env = envs[cur_env]
@@ -818,7 +824,7 @@ def train(envs: list[Environment], pop: list[Individual], best: int, ini_g: int,
     print( '\nExecution time: '+str(round((fim-ini)/60))+' minutes \n')
     print( '\nExecution time: '+str(round((fim-ini)))+' seconds \n')
 
-    file = open(experiment_name+'/neuroended', 'w')  # saves control (simulation has ended) file for bash loop file
+    file = open(args.experiment_name+'/neuroended', 'w')  # saves control (simulation has ended) file for bash loop file
     file.close()
 
     env.state_to_log() 
@@ -880,10 +886,11 @@ def train_spec(env: Environment,
         spec_notimproved = 0
     
     if spec_notimproved >= cfg['doomsteps']:
-        save_txt(experiment_name+'/results.txt', '\ndoomsday', 'a')
+        save_txt(args.experiment_name+'/results.txt', '\ndoomsday', 'a')
         # assert max(pop) == best_sol, f"Best fit {best_sol} not in population 3 {max(pop)}"
         pop = doomsday(env, pop, cfg)
         spec_notimproved = 0
+
     # if min(pop, key=lambda x: (x.front, -x.crowding_dist)) < beginBest:
         # print(f"Best individual worsened: {max(pop)} {beginBest}. Doomsday")
     # Replace one in population with the best stored individual for this island
@@ -903,7 +910,7 @@ def selection(env: Environment, pop: list[Individual], scale_type: int, ref_poin
     best = argmin(pop, key=lambda x: (x.front, -x.crowding_dist)) #best solution in generation
     pop_cp = pop.copy()
     bestFits = []
-    for i in range(2):
+    for i in range(1):
         pop[best].evaluate(env) # repeats best eval, for stability issues
         bestFits.append(pop[best].fitness)
     # Check if all in bestFits are the same
@@ -1006,6 +1013,9 @@ def main(envs: list[Environment], args: argparse.Namespace, cfg: dict) -> None:
         args (argparse.Namespace): Command line arguments
         cfg (dict): Configuration dictionary
     """
+    # Turn wandb cfg object into dictionary
+    cfg = dict(cfg)
+    print_dict(cfg)
     # loads file with the best solution for testing
     if args.run_mode =='test':
         file = gzip.open(args.experiment_name+'/best')
@@ -1029,41 +1039,21 @@ def main(envs: list[Environment], args: argparse.Namespace, cfg: dict) -> None:
 
     # saves results for first pop
     best, mean, std = fit_pop_stats
-    save_txt(experiment_name+'/results.txt', '\n\ngen best mean std' + '\n'+str(ini_g)+' '+str(round(pop[best].fitness,6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
+    save_txt(args.experiment_name+'/results.txt', '\n\ngen best mean std' + '\n'+str(ini_g)+' '+str(round(pop[best].fitness,6))+' '+str(round(mean,6))+' '+str(round(std,6)), 'a')
     print( '\n GENERATION '+str(ini_g)+' '+str(round(pop[best].fitness ,6))+' '+str(round(mean,6))+' '+str(round(std,6)))
 
     train(envs, pop, best, ini_g, cfg)
 
-
-if __name__ == "__main__": # Basically just checks if the script is being run directly or imported as a module
-
-    # Command line arguments, this makes it so you can run the script from the command line with different arguments as such:
-    # python optimization_specialist_demo.py --experiment_name=optimization_test --headless=True --new_evolution=False --run_mode=train
-    parser = argparse.ArgumentParser(description='Run the genetic algorithm for the evoman framework')
-    parser.add_argument('--experiment_name', type=str, default='optimization_test', help='Name of the experiment')
-    parser.add_argument('--headless', type=bool, default=True, help='Run the simulation without visuals')
-    parser.add_argument('--new_evolution', type=bool, default=False, help='Start a new evolution')
-    parser.add_argument('--run_mode', type=str, default='train', help='Run mode for the genetic algorithm')
-    parser.add_argument('--wandb', action='store_true', help='Use Weights and Biases for logging')
-    args = parser.parse_args()
-
-    # Loading our training config
-    cfg: dict = yaml.safe_load(open('./config/' + args.experiment_name + '.yaml')) # type: ignore
+def startSweep() -> None:
     
-    print('Config:')
-    print_dict(cfg)
-
-    # Initialize Weights and Biases
     wandb.init(
         # set the wandb project where this run will be logged
-        project="Evoman Competition",
+        project="Evoman Competition Sweep",
 
         # track hyperparameters and run metadata
-        name=args.experiment_name,
-        config=cfg
+        name=args.experiment_name
     )
-
-    # choose this for not using visuals and thus making experiments faster
+    cfg = wandb.config
     headless = args.headless
     if headless:
         os.environ["SDL_VIDEODRIVER"] = "dummy" # Turn off videodriver when running headless
@@ -1073,16 +1063,18 @@ if __name__ == "__main__": # Basically just checks if the script is being run di
     if not os.path.exists(experiment_name):
         os.makedirs(experiment_name)
 
+    
+
     # initializes simulation in individual evolution mode, for single static enemy.
     envs = []
-    for i in range(len(cfg['enemies'])):
+    for i in range(len(cfg.enemies)):
         if not os.path.exists(experiment_name+f'{i}'):
             os.makedirs(experiment_name+f'{i}')
         env = Environment(experiment_name=experiment_name+f'{i}',
-                        enemies=cfg['enemies'][i],
-                        multiplemode= 'yes' if len(cfg['enemies'][i]) > 1 else 'no',
+                        enemies=cfg.enemies[i],
+                        multiplemode= 'yes' if len(cfg.enemies[i]) > 1 else 'no',
                         playermode="ai",
-                        player_controller=player_controller(cfg['archetecture']), # Initialise player with specified archetecture
+                        player_controller=player_controller(cfg.archetecture), # Initialise player with specified archetecture
                         enemymode="static",
                         level=2,
                         speed="fastest",
@@ -1096,3 +1088,70 @@ if __name__ == "__main__": # Basically just checks if the script is being run di
     ini = time.time()  # sets time marker
 
     main(envs, args, cfg)
+
+if __name__ == "__main__": # Basically just checks if the script is being run directly or imported as a module
+
+    # Command line arguments, this makes it so you can run the script from the command line with different arguments as such:
+    # python optimization_specialist_demo.py --experiment_name=optimization_test --headless=True --new_evolution=False --run_mode=train
+    parser = argparse.ArgumentParser(description='Run the genetic algorithm for the evoman framework')
+    parser.add_argument('--experiment_name', type=str, default='optimization_test', help='Name of the experiment')
+    parser.add_argument('--headless', type=bool, default=True, help='Run the simulation without visuals')
+    parser.add_argument('--new_evolution', type=bool, default=False, help='Start a new evolution')
+    parser.add_argument('--run_mode', type=str, default='train', help='Run mode for the genetic algorithm')
+    parser.add_argument('--wandb', action='store_true', help='Use Weights and Biases for logging')
+    parser.add_argument('--sweep', action='store_true', help='Use Weights and Biases for sweeping')
+    args = parser.parse_args()
+
+    # Loading our training config
+    cfg: dict = yaml.safe_load(open('./config/' + args.experiment_name + '.yaml')) # type: ignore
+    
+    print('Config:')
+    print_dict(cfg)
+    if args.sweep:
+        sweep_id = wandb.sweep(sweep=cfg, project="Evoman Competition")
+        wandb.agent(sweep_id, function=startSweep)
+
+    else:
+        # Initialize Weights and Biases
+        wandb.init(
+            # set the wandb project where this run will be logged
+            project="Evoman Task 2",
+
+            # track hyperparameters and run metadata
+            name=args.experiment_name + 'Species' + '3',
+            config=cfg
+        )
+
+        # choose this for not using visuals and thus making experiments faster
+        headless = args.headless
+        if headless:
+            os.environ["SDL_VIDEODRIVER"] = "dummy" # Turn off videodriver when running headless
+
+        # Create a folder to store the experiment
+        experiment_name = args.experiment_name
+        if not os.path.exists(experiment_name):
+            os.makedirs(experiment_name)
+
+        # initializes simulation in individual evolution mode, for single static enemy.
+        envs = []
+        for i in range(len(cfg['enemies'])):
+            if not os.path.exists(experiment_name+f'{i}'):
+                os.makedirs(experiment_name+f'{i}')
+            env = Environment(experiment_name=experiment_name+f'{i}',
+                            enemies=cfg['enemies'][i],
+                            multiplemode= 'yes' if len(cfg['enemies'][i]) > 1 else 'no',
+                            playermode="ai",
+                            player_controller=player_controller(cfg['archetecture']), # Initialise player with specified archetecture
+                            enemymode="static",
+                            level=2,
+                            speed="fastest",
+                            visuals=False,
+                            clockprec='medium')
+            env.state_to_log() # checks environment state
+            envs.append(env)
+
+
+        ####   Optimization for controller solution (best genotype-weights for phenotype-network): Ganetic Algorihm    ###
+        ini = time.time()  # sets time marker
+
+        main(envs, args, cfg)
